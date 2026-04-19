@@ -1,0 +1,36 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+OwlcatPortraitToolVenv/
+.venv/
+venv/
+ENV/
+
+# IDE / editor files
+.vscode/
+
+# Local output directories
+.output/
+output/
+
+# Test artifacts
+.pytest_cache/
+pytest-cache-files-*
+
+# Environment files
+.env
+.envrc
+
+# Packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# General temporary files
+*.log
+*.tmp
+*.bak
+*.swp

@@ -1,0 +1,14 @@
+# This file will list the dependencies (libraries, etc) that the project relies on.
+# Call pip install -r dependencies.txt to install them.
+
+# PyQt5 for the UI
+PyQt5
+
+# HTTP requests for image URL and tag search services
+requests
+
+# Image loading and validation
+Pillow
+
+# Test runner
+pytest
