@@ -3,6 +3,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
+from RequestHeaders import IMAGE_REQUEST_HEADERS
 import URLService
 
 
@@ -37,9 +38,10 @@ def test_is_valid_url_rejects_missing_or_unsupported_scheme():
 def test_get_image_from_url_downloads_supported_image(monkeypatch):
     image_bytes = make_png_bytes()
 
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, headers):
         assert url == "https://example.com/image.png"
         assert timeout == URLService.REQUEST_TIMEOUT_SECONDS
+        assert headers == IMAGE_REQUEST_HEADERS
         return FakeResponse(
             image_bytes,
             headers={"content-type": "image/png; charset=binary"},
@@ -53,7 +55,8 @@ def test_get_image_from_url_downloads_supported_image(monkeypatch):
 
 
 def test_get_image_from_url_rejects_non_image_content_type(monkeypatch):
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, headers):
+        assert headers == IMAGE_REQUEST_HEADERS
         return FakeResponse(b"<html></html>", headers={"content-type": "text/html"})
 
     monkeypatch.setattr(URLService.requests, "get", fake_get)

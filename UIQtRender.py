@@ -16,6 +16,7 @@ from GlobalsService import (
     settings,
 )
 from SearchService import search_portraits_by_tags
+from RequestHeaders import IMAGE_REQUEST_HEADERS
 from URLService import get_image_from_url, is_valid_url
 
 
@@ -25,12 +26,47 @@ MIN_THUMBNAIL_WIDTH = 150
 MAX_THUMBNAIL_WIDTH = 220
 RESULT_CELL_PADDING = 24
 RESULT_CELL_SPACING = 12
-IMAGE_REQUEST_HEADERS = {
-    "User-Agent": "OwlcatPortraitTool/1.0",
-}
+MAX_CONCURRENT_PREVIEW_LOADS = 6
+MAX_PREVIEW_LOAD_ATTEMPTS = 5
+PREVIEW_REQUEST_TIMEOUT_SECONDS = 8
+RESULT_IMAGE_URL_ROLE = QtCore.Qt.UserRole
+RESULT_PREVIEW_FAILURE_ROLE = QtCore.Qt.UserRole + 1
 LOCAL_OUTPUT_FOLDER = Path(__file__).resolve().parent / "output"
 PORTRAIT_FOLDER_NAME_LENGTH = 16
 PORTRAIT_FOLDER_ALPHABET = string.ascii_uppercase + string.digits
+APP_CLOSE_CONFIRMATION_TITLE = "Close Owlcat Portrait Tool?"
+APP_CLOSE_CONFIRMATION_MESSAGE = "Are you sure you want to close Owlcat Portrait Tool?"
+UNSAVED_EDITOR_CONFIRMATION_TITLE = "Leave Portrait Editor?"
+UNSAVED_EDITOR_CONFIRMATION_MESSAGE = (
+    "You have unsaved portrait changes. Leave the Portrait Editor without exporting?"
+)
+
+
+class PreviewLoaderSignals(QtCore.QObject):
+    loaded = QtCore.pyqtSignal(int, int, QtGui.QImage)
+    failed = QtCore.pyqtSignal(int, int, str)
+
+
+class PreviewLoader(QtCore.QRunnable):
+    def __init__(self, generation, result_index, result):
+        super().__init__()
+        self.generation = generation
+        self.result_index = result_index
+        self.result = result
+        self.signals = PreviewLoaderSignals()
+
+    def run(self):
+        try:
+            image = load_preview_image(self.result)
+        except Exception as error:
+            self.signals.failed.emit(
+                self.generation,
+                self.result_index,
+                str(error),
+            )
+            return
+
+        self.signals.loaded.emit(self.generation, self.result_index, image)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -47,6 +83,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setup_portrait_editor_tab()
         self.setup_search_tab()
         self.setup_settings_tab()
+        self.previous_tab_index = self.tab_widget.currentIndex()
+        self.reverting_tab_change = False
+        self.tab_widget.currentChanged.connect(self.handle_tab_changed)
 
     def setup_portrait_editor_tab(self):
         self.portrait_editor_tab = PortraitEditorTab()
@@ -67,6 +106,63 @@ class MainWindow(QtWidgets.QMainWindow):
         self.portrait_editor_tab.set_source_url(image_url)
         self.show_portrait_editor_tab()
 
+    def handle_tab_changed(self, tab_index):
+        if self.reverting_tab_change:
+            return
+
+        previous_tab_index = self.previous_tab_index
+        self.previous_tab_index = tab_index
+
+        if previous_tab_index != PORTRAIT_EDITOR_TAB_INDEX:
+            return
+
+        if tab_index == PORTRAIT_EDITOR_TAB_INDEX:
+            return
+
+        if not self.portrait_editor_tab.has_unsaved_changes:
+            return
+
+        if self.confirm_leave_portrait_editor():
+            return
+
+        self.reverting_tab_change = True
+        self.tab_widget.setCurrentIndex(previous_tab_index)
+        self.previous_tab_index = previous_tab_index
+        self.reverting_tab_change = False
+
+    def confirm_leave_portrait_editor(self):
+        return self.ask_yes_no(
+            UNSAVED_EDITOR_CONFIRMATION_TITLE,
+            UNSAVED_EDITOR_CONFIRMATION_MESSAGE,
+        )
+
+    def confirm_close_application(self):
+        return self.ask_yes_no(
+            APP_CLOSE_CONFIRMATION_TITLE,
+            APP_CLOSE_CONFIRMATION_MESSAGE,
+        )
+
+    def ask_yes_no(self, title, message):
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            title,
+            message,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        return answer == QtWidgets.QMessageBox.Yes
+
+    def closeEvent(self, event):
+        if self.portrait_editor_tab.has_unsaved_changes:
+            if not self.confirm_leave_portrait_editor():
+                event.ignore()
+                return
+        elif not self.confirm_close_application():
+            event.ignore()
+            return
+
+        super().closeEvent(event)
+
 
 class PortraitEditorTab(QtWidgets.QWidget):
     """Screen 1: portrait loading and editing."""
@@ -79,6 +175,7 @@ class PortraitEditorTab(QtWidgets.QWidget):
 
         self.source_url = None
         self.source_image = None
+        self.has_unsaved_changes = False
 
         self.source_label = QtWidgets.QLabel("No portrait selected")
         self.source_label.setWordWrap(True)
@@ -86,6 +183,7 @@ class PortraitEditorTab(QtWidgets.QWidget):
         layout.addWidget(self.source_label)
 
         self.crop_canvas = PortraitCropCanvas()
+        self.crop_canvas.cropChanged.connect(self.mark_unsaved_changes)
         layout.addWidget(self.crop_canvas, stretch=1)
 
         button_layout = QtWidgets.QHBoxLayout()
@@ -106,6 +204,7 @@ class PortraitEditorTab(QtWidgets.QWidget):
         layout.addWidget(self.status_label)
 
     def set_source_url(self, image_url):
+        self.has_unsaved_changes = False
         self.source_url = image_url
         self.source_label.setText(f"Selected portrait source:\n{image_url}")
         self.status_label.setText("Loading image...")
@@ -125,6 +224,10 @@ class PortraitEditorTab(QtWidgets.QWidget):
         self.export_local_button.setEnabled(True)
         self.export_game_button.setEnabled(True)
         self.status_label.setText("Drag the image to position it inside the crop outline.")
+
+    def mark_unsaved_changes(self):
+        if self.source_image is not None:
+            self.has_unsaved_changes = True
 
     def export_local(self):
         self.export_portrait_set(LOCAL_OUTPUT_FOLDER)
@@ -147,11 +250,14 @@ class PortraitEditorTab(QtWidgets.QWidget):
             )
             output_image.save(output_folder / portrait_size.name)
 
+        self.has_unsaved_changes = False
         self.status_label.setText(f"Exported portrait set to:\n{output_folder}")
 
 
 class PortraitCropCanvas(QtWidgets.QWidget):
     """Draggable image preview with a fixed Pathfinder full-length crop frame."""
+
+    cropChanged = QtCore.pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -321,9 +427,16 @@ class PortraitCropCanvas(QtWidgets.QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
+            crop_changed = (
+                self.source_image is not None
+                and self.drag_start_offset is not None
+                and self.image_offset != self.drag_start_offset
+            )
             self.drag_start_pos = None
             self.drag_start_offset = None
             self.setCursor(QtCore.Qt.ArrowCursor)
+            if crop_changed:
+                self.cropChanged.emit()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -340,6 +453,40 @@ def image_to_pixmap(image):
         QtGui.QImage.Format_RGBA8888,
     )
     return QtGui.QPixmap.fromImage(qt_image.copy())
+
+
+def load_preview_image(result):
+    preview_url = result.preview_url or result.image_url
+    last_error = None
+
+    for _ in range(MAX_PREVIEW_LOAD_ATTEMPTS):
+        try:
+            response = requests.get(
+                preview_url,
+                headers=IMAGE_REQUEST_HEADERS,
+                timeout=PREVIEW_REQUEST_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+
+            image = Image.open(BytesIO(response.content))
+            image.thumbnail((MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_WIDTH * 2))
+            image = image.convert("RGBA")
+
+            image_data = image.tobytes("raw", "RGBA")
+            qt_image = QtGui.QImage(
+                image_data,
+                image.width,
+                image.height,
+                QtGui.QImage.Format_RGBA8888,
+            )
+            return qt_image.copy()
+        except Exception as error:
+            last_error = error
+
+    raise RuntimeError(
+        f"Could not load preview after {MAX_PREVIEW_LOAD_ATTEMPTS} attempts: "
+        f"{last_error}"
+    )
 
 
 def generate_portrait_folder_name():
@@ -395,6 +542,9 @@ class SearchTab(QtWidgets.QWidget):
         layout.addWidget(self.results_list)
 
         self.image_result_widgets = []
+        self.preview_thread_pool = QtCore.QThreadPool(self)
+        self.preview_thread_pool.setMaxThreadCount(MAX_CONCURRENT_PREVIEW_LOADS)
+        self.preview_generation = 0
 
     def get_search_input(self):
         text = self.search_bar.text().strip()
@@ -406,8 +556,13 @@ class SearchTab(QtWidgets.QWidget):
     def process_search(self):
         self.render_search_results()
 
+    def cancel_preview_loads(self):
+        self.preview_generation += 1
+        self.preview_thread_pool.clear()
+
     def render_search_results(self):
         """Render URL or tag-search results into the scrollable results list."""
+        self.cancel_preview_loads()
         self.image_result_widgets = []
         self.results_list.clear()
         search_input = self.get_search_input()
@@ -430,9 +585,21 @@ class SearchTab(QtWidgets.QWidget):
         self.main_window.open_portrait_editor_with_url(url)
 
     def open_selected_result(self, item):
-        image_url = item.data(QtCore.Qt.UserRole)
+        preview_failure = item.data(RESULT_PREVIEW_FAILURE_ROLE)
+        if preview_failure:
+            self.show_preview_failure_message(preview_failure)
+            return
+
+        image_url = item.data(RESULT_IMAGE_URL_ROLE)
         if image_url:
             self.main_window.open_portrait_editor_with_url(image_url)
+
+    def show_preview_failure_message(self, message):
+        QtWidgets.QMessageBox.warning(
+            self,
+            "Preview Failed",
+            f"This preview could not be loaded.\n\n{message}",
+        )
 
     def render_tag_search_results(self, tags):
         self.results_list.addItem("Searching...")
@@ -453,53 +620,57 @@ class SearchTab(QtWidgets.QWidget):
         self.image_result_widgets = []
         self.update_results_grid_size()
 
-        for result in results:
-            QtWidgets.QApplication.processEvents()
-
-            try:
-                pixmap = self.load_image_preview(result)
-            except Exception as error:
-                self.results_list.addItem(
-                    f"Could not load image: {result.image_url} ({error})"
-                )
-                continue
-
+        for result_index, result in enumerate(results):
             item = QtWidgets.QListWidgetItem()
             item.setSizeHint(self.results_list.gridSize())
-            item.setData(QtCore.Qt.UserRole, result.image_url)
+            item.setData(RESULT_IMAGE_URL_ROLE, result.image_url)
             self.results_list.addItem(item)
 
             image_label = QtWidgets.QLabel()
             image_label.setAlignment(QtCore.Qt.AlignCenter)
             image_label.setCursor(QtCore.Qt.PointingHandCursor)
             image_label.setToolTip(self.format_result_tooltip(result))
+            image_label.setText("Loading...")
             self.results_list.setItemWidget(item, image_label)
-            self.image_result_widgets.append((item, image_label, pixmap))
+            self.image_result_widgets.append((item, image_label, None))
 
-        self.update_result_images()
+            worker = PreviewLoader(self.preview_generation, result_index, result)
+            worker.signals.loaded.connect(self.preview_loaded)
+            worker.signals.failed.connect(self.preview_failed)
+            self.preview_thread_pool.start(worker)
 
     def load_image_preview(self, result):
-        preview_url = result.preview_url or result.image_url
-        response = requests.get(
-            preview_url,
-            headers=IMAGE_REQUEST_HEADERS,
-            timeout=IMAGE_REQUEST_TIMEOUT_SECONDS,
+        return QtGui.QPixmap.fromImage(load_preview_image(result))
+
+    def preview_loaded(self, generation, result_index, image):
+        if generation != self.preview_generation:
+            return
+
+        if result_index >= len(self.image_result_widgets):
+            return
+
+        item, image_label, _ = self.image_result_widgets[result_index]
+        pixmap = QtGui.QPixmap.fromImage(image)
+        self.image_result_widgets[result_index] = (item, image_label, pixmap)
+        item.setData(RESULT_PREVIEW_FAILURE_ROLE, None)
+        image_label.setText("")
+        self.update_result_image(image_label, pixmap)
+
+    def preview_failed(self, generation, result_index, error):
+        if generation != self.preview_generation:
+            return
+
+        if result_index >= len(self.image_result_widgets):
+            return
+
+        item, image_label, _ = self.image_result_widgets[result_index]
+        item.setData(RESULT_PREVIEW_FAILURE_ROLE, error)
+        image_label.clear()
+        image_label.setText("Preview failed")
+        image_label.setToolTip(
+            f"{image_label.toolTip()}\nPreview failed after "
+            f"{MAX_PREVIEW_LOAD_ATTEMPTS} attempts: {error}"
         )
-        response.raise_for_status()
-
-        image = Image.open(BytesIO(response.content))
-        image.thumbnail((MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_WIDTH * 2))
-        image = image.convert("RGBA")
-
-        image_data = image.tobytes("raw", "RGBA")
-        qt_image = QtGui.QImage(
-            image_data,
-            image.width,
-            image.height,
-            QtGui.QImage.Format_RGBA8888,
-        )
-
-        return QtGui.QPixmap.fromImage(qt_image)
 
     def format_result_tooltip(self, result):
         if result.width and result.height:
@@ -542,21 +713,34 @@ class SearchTab(QtWidgets.QWidget):
             item.setSizeHint(cell_size)
 
     def update_result_images(self):
-        icon_size = self.results_list.iconSize()
-
         for _, image_label, pixmap in self.image_result_widgets:
-            scaled_pixmap = pixmap.scaled(
-                icon_size,
-                QtCore.Qt.KeepAspectRatio,
-                QtCore.Qt.SmoothTransformation,
-            )
-            image_label.setPixmap(scaled_pixmap)
+            if pixmap is None:
+                continue
+
+            self.update_result_image(image_label, pixmap)
+
+    def update_result_image(self, image_label, pixmap):
+        icon_size = self.results_list.iconSize()
+        if pixmap is None:
+            return
+
+        scaled_pixmap = pixmap.scaled(
+            icon_size,
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
+        image_label.setPixmap(scaled_pixmap)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "results_list"):
             self.update_results_grid_size()
             self.update_result_images()
+
+    def closeEvent(self, event):
+        self.cancel_preview_loads()
+        self.preview_thread_pool.waitForDone(100)
+        super().closeEvent(event)
 
 
 class SettingsTab(QtWidgets.QWidget):

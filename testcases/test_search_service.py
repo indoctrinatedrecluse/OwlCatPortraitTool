@@ -2,6 +2,7 @@ from io import BytesIO
 
 from PIL import Image
 
+from RequestHeaders import IMAGE_REQUEST_HEADERS, JSON_REQUEST_HEADERS
 import SearchService
 
 
@@ -88,6 +89,7 @@ def test_search_portraits_by_tags_deduplicates_and_skips_non_images(monkeypatch)
 
     def fake_get(url, timeout, headers):
         assert "tags=vampire" in url
+        assert headers == JSON_REQUEST_HEADERS
         return FakeResponse(
             [
                 {"file_url": "https://example.com/a.jpg"},
@@ -111,6 +113,7 @@ def test_search_portraits_by_tags_obeys_max_results(monkeypatch):
     monkeypatch.setattr(SearchService, "BOORU_SITES", ["https://example.com/api?tags={tags}"])
 
     def fake_get(url, timeout, headers):
+        assert headers == JSON_REQUEST_HEADERS
         return FakeResponse(
             [
                 {"file_url": "https://example.com/a.jpg"},
@@ -131,6 +134,7 @@ def test_search_portraits_by_tags_obeys_max_results(monkeypatch):
 
 def test_get_image_dimensions_reads_downloaded_image_size(monkeypatch):
     def fake_get(url, headers, timeout):
+        assert headers == IMAGE_REQUEST_HEADERS
         return FakeResponse(content=make_png_bytes((44, 55)))
 
     monkeypatch.setattr(SearchService.requests, "get", fake_get)

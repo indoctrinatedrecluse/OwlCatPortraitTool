@@ -27,7 +27,25 @@ pytest-cache-files-*
 # Packaging artifacts
 build/
 dist/
+release/
+*.spec
 *.egg-info/
+*.manifest
+
+# Built executables and release packages
+*.exe
+*.msi
+*.zip
+*.7z
+*.tar.gz
+
+# Tool caches and reports
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.cache/
 
 # General temporary files
 *.log

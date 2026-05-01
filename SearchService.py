@@ -6,13 +6,11 @@ from PIL import Image
 import requests
 
 from GlobalsService import get_full_length_portrait_size, get_required_portrait_dimensions
+from RequestHeaders import IMAGE_REQUEST_HEADERS, JSON_REQUEST_HEADERS
 
 
 MAX_SEARCH_RESULTS = 30
 REQUEST_TIMEOUT_SECONDS = 15
-IMAGE_REQUEST_HEADERS = {
-    "User-Agent": "OwlcatPortraitTool/1.0",
-}
 SUPPORTED_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 
 
@@ -46,7 +44,7 @@ def search_portraits_by_tags(tags, max_results=MAX_SEARCH_RESULTS):
             response = requests.get(
                 site.format(tags=tag_query),
                 timeout=REQUEST_TIMEOUT_SECONDS,
-                headers=IMAGE_REQUEST_HEADERS,
+                headers=JSON_REQUEST_HEADERS,
             )
             response.raise_for_status()
             results = extract_image_results(response.json())

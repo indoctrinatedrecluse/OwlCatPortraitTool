@@ -1,6 +1,3 @@
-# Backward-compatible mirror of requirements.txt.
-# Call pip install -r requirements.txt for the standard install path.
-
 # PyQt5 for the UI
 PyQt5
 

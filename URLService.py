@@ -4,6 +4,8 @@ from urllib.parse import urlparse
 import requests
 from PIL import Image
 
+from RequestHeaders import IMAGE_REQUEST_HEADERS
+
 
 REQUEST_TIMEOUT_SECONDS = 15
 SUPPORTED_IMAGE_CONTENT_TYPES = {
@@ -24,7 +26,11 @@ def get_image_from_url(url):
     if not is_valid_url(url):
         raise ValueError("Enter a valid HTTP or HTTPS image URL.")
 
-    response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
+    response = requests.get(
+        url,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        headers=IMAGE_REQUEST_HEADERS,
+    )
     response.raise_for_status()
 
     content_type = response.headers.get("content-type", "").split(";")[0].lower()

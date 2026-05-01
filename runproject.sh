@@ -11,7 +11,8 @@ else
 fi
 
 VENV_PYTHON="$SCRIPT_DIR/OwlcatPortraitToolVenv/Scripts/python.exe"
-APP_SCRIPT="$SCRIPT_DIR_WIN\\UIQtRender.py"
+BUILD_SCRIPT="$SCRIPT_DIR_WIN\\build_exe.py"
+APP_EXE="$SCRIPT_DIR/release/OwlcatPortraitTool/OwlcatPortraitTool.exe"
 
 if [ ! -x "$VENV_PYTHON" ]; then
     echo "Could not find the virtual environment Python at:"
@@ -22,4 +23,18 @@ if [ ! -x "$VENV_PYTHON" ]; then
     exit 1
 fi
 
-exec "$VENV_PYTHON" -u "$APP_SCRIPT" "$@"
+if [ ! -x "$APP_EXE" ]; then
+    "$VENV_PYTHON" -u "$BUILD_SCRIPT"
+    BUILD_STATUS=$?
+    if [ "$BUILD_STATUS" -ne 0 ]; then
+        exit "$BUILD_STATUS"
+    fi
+
+    if [ ! -x "$APP_EXE" ]; then
+        echo "Build completed, but the executable was not found at:"
+        echo "  $APP_EXE"
+        exit 1
+    fi
+fi
+
+exec "$APP_EXE" "$@"
