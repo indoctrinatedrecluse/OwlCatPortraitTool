@@ -8,8 +8,8 @@ from PIL import Image
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 from GlobalsService import (
-    get_available_games,
     get_full_length_portrait_size,
+    get_next_game_name,
     get_required_portrait_dimensions,
     set_appdata_locallow_folder,
     set_game_name,
@@ -142,6 +142,9 @@ class MainWindow(QtWidgets.QMainWindow):
             APP_CLOSE_CONFIRMATION_MESSAGE,
         )
 
+    def ensure_current_game_path_exists(self):
+        return self.settings_tab.ensure_current_game_path_exists()
+
     def ask_yes_no(self, title, message):
         answer = QtWidgets.QMessageBox.question(
             self,
@@ -189,12 +192,12 @@ class PortraitEditorTab(QtWidgets.QWidget):
         button_layout = QtWidgets.QHBoxLayout()
         layout.addLayout(button_layout)
 
-        self.export_local_button = QtWidgets.QPushButton("Export Local")
+        self.export_local_button = QtWidgets.QPushButton("Export To Local Output")
         self.export_local_button.clicked.connect(self.export_local)
         self.export_local_button.setEnabled(False)
         button_layout.addWidget(self.export_local_button)
 
-        self.export_game_button = QtWidgets.QPushButton("Export To Game")
+        self.export_game_button = QtWidgets.QPushButton("Export To AppData/Portraits")
         self.export_game_button.clicked.connect(self.export_to_game)
         self.export_game_button.setEnabled(False)
         button_layout.addWidget(self.export_game_button)
@@ -233,6 +236,11 @@ class PortraitEditorTab(QtWidgets.QWidget):
         self.export_portrait_set(LOCAL_OUTPUT_FOLDER)
 
     def export_to_game(self):
+        main_window = self.window()
+        if hasattr(main_window, "ensure_current_game_path_exists"):
+            if not main_window.ensure_current_game_path_exists():
+                return
+
         self.export_portrait_set(settings.output_folder)
 
     def export_portrait_set(self, output_root):
@@ -752,11 +760,9 @@ class SettingsTab(QtWidgets.QWidget):
         layout = QtWidgets.QFormLayout()
         self.setLayout(layout)
 
-        self.game_selector = QtWidgets.QComboBox()
-        self.game_selector.addItems(get_available_games())
-        self.game_selector.setCurrentText(settings.game_name)
-        self.game_selector.currentTextChanged.connect(self.change_game)
-        layout.addRow("Game", self.game_selector)
+        self.target_game_button = QtWidgets.QPushButton()
+        self.target_game_button.clicked.connect(self.switch_target_game)
+        layout.addRow("Target Game", self.target_game_button)
 
         self.appdata_path_label = QtWidgets.QLabel()
         self.appdata_path_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
@@ -774,9 +780,26 @@ class SettingsTab(QtWidgets.QWidget):
 
         self.refresh_path_labels()
 
-    def change_game(self, game_name):
+    def switch_target_game(self):
+        self.change_game(get_next_game_name(), validate_path=True)
+
+    def change_game(self, game_name, validate_path=False):
         set_game_name(game_name)
         self.refresh_path_labels()
+        if validate_path:
+            self.ensure_current_game_path_exists()
+
+    def ensure_current_game_path_exists(self):
+        if settings.appdata_locallow_folder.exists():
+            return True
+
+        QtWidgets.QMessageBox.warning(
+            self,
+            "Game Folder Not Found",
+            "The saved AppData folder for this game could not be found. "
+            "Please select the correct game folder.",
+        )
+        return self.choose_appdata_path()
 
     def choose_appdata_path(self):
         selected_folder = QtWidgets.QFileDialog.getExistingDirectory(
@@ -786,12 +809,14 @@ class SettingsTab(QtWidgets.QWidget):
         )
 
         if not selected_folder:
-            return
+            return False
 
         set_appdata_locallow_folder(selected_folder)
         self.refresh_path_labels()
+        return True
 
     def refresh_path_labels(self):
+        self.target_game_button.setText(settings.game_name)
         self.appdata_path_label.setText(str(settings.appdata_locallow_folder))
         self.portraits_path_label.setText(str(settings.output_folder))
 

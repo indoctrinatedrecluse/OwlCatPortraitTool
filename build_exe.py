@@ -4,6 +4,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import GlobalsService
+import LocalConfigService
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENTRYPOINT = PROJECT_ROOT / "UIQtRender.py"
@@ -12,6 +15,16 @@ BUILD_DIR = PROJECT_ROOT / "build"
 DIST_DIR = PROJECT_ROOT / "dist"
 RELEASE_DIR = PROJECT_ROOT / "release"
 SPEC_FILE = PROJECT_ROOT / f"{APP_NAME}.spec"
+CONFIG_FILE = PROJECT_ROOT / LocalConfigService.CONFIG_FILE_NAME
+
+
+def initialize_local_config():
+    return LocalConfigService.ensure_config_file(
+        GlobalsService.GAME_CONFIGS,
+        GlobalsService.PATHFINDER_KINGMAKER,
+        GlobalsService.get_builtin_appdata_locallow_folder,
+        path=CONFIG_FILE,
+    )
 
 
 def build_pyinstaller_command(onefile=False):
@@ -30,6 +43,8 @@ def build_pyinstaller_command(onefile=False):
         str(BUILD_DIR),
         "--specpath",
         str(PROJECT_ROOT),
+        "--add-data",
+        f"{CONFIG_FILE}{';' if sys.platform == 'win32' else ':'}.",
     ]
 
     if onefile:
@@ -53,6 +68,8 @@ def remove_build_outputs():
 def run_build(onefile=False, clean=True, dry_run=False):
     if not ENTRYPOINT.exists():
         raise FileNotFoundError(f"Application entrypoint not found: {ENTRYPOINT}")
+
+    initialize_local_config()
 
     if clean:
         remove_build_outputs()

@@ -6,8 +6,12 @@ Current features include:
 2. Drag-to-position portrait cropping against the required full-length frame.
 3. Export of Small, Medium, and Fulllength portrait files to a local output folder or the selected game's AppData portraits folder.
 4. Tag search across supported booru APIs, with asynchronous preview loading and clickable results.
-5. Settings for switching between Pathfinder Kingmaker and Pathfinder Wrath of the Righteous portrait dimensions and AppData paths.
+5. Settings for switching between supported Owlcat game portrait dimensions and AppData paths.
 6. Unsaved-change confirmation before leaving the portrait editor or closing the app.
+
+Per-game folder settings are stored locally in `OwlcatPortraitTool.dat`. The
+build script initializes this file with default Owlcat AppData paths, and the
+app updates it when you choose a custom game folder.
 
 ## Building the Windows exe
 

@@ -11,6 +11,8 @@ def test_build_command_targets_current_entrypoint_and_default_folder_build():
     assert "--clean" in command
     assert "--distpath" in command
     assert str(build_exe.RELEASE_DIR) in command
+    assert "--add-data" in command
+    assert any(str(build_exe.CONFIG_FILE) in part for part in command)
     assert "--contents-directory" in command
     assert "." in command
     assert "--onefile" not in command
@@ -47,3 +49,13 @@ def test_clean_removes_release_outputs(tmp_path, monkeypatch):
     assert not dist_dir.exists()
     assert not release_dir.exists()
     assert not spec_file.exists()
+
+
+def test_initialize_local_config_creates_dat_file(tmp_path, monkeypatch):
+    config_file = tmp_path / "OwlcatPortraitTool.dat"
+    monkeypatch.setattr(build_exe, "CONFIG_FILE", config_file)
+
+    build_exe.initialize_local_config()
+
+    assert config_file.exists()
+    assert "Pathfinder Kingmaker" in config_file.read_text(encoding="utf-8")

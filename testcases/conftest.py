@@ -18,8 +18,14 @@ import GlobalsService
 
 @pytest.fixture(autouse=True)
 def reset_global_settings():
+    config_path = PROJECT_ROOT / "testcases" / "_tmp" / "OwlcatPortraitTool.dat"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    if config_path.exists():
+        config_path.unlink()
+    GlobalsService.load_local_config(path=config_path)
     GlobalsService.set_game_name(GlobalsService.PATHFINDER_KINGMAKER)
     yield
+    GlobalsService.load_local_config(path=config_path)
     GlobalsService.set_game_name(GlobalsService.PATHFINDER_KINGMAKER)
 
 

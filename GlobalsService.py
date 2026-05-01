@@ -1,9 +1,13 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+import LocalConfigService
+
 
 PATHFINDER_KINGMAKER = "Pathfinder Kingmaker"
 PATHFINDER_WRATH = "Pathfinder Wrath of the Righteous"
+WARHAMMER_ROGUE_TRADER = "Warhammer 40k: Rogue Trader"
+WARHAMMER_DARK_HERESY = "Warhammer 40k: Dark Heresy"
 
 
 @dataclass(frozen=True)
@@ -11,6 +15,13 @@ class PortraitSize:
     name: str
     width: int
     height: int
+
+
+@dataclass(frozen=True)
+class GameConfig:
+    name: str
+    appdata_folder_name: str
+    portrait_dimensions: tuple[PortraitSize, ...]
 
 
 @dataclass
@@ -21,19 +32,6 @@ class AppSettings:
 
 
 settings = AppSettings()
-
-DEFAULT_APPDATA_LOCALLOW_PATHS_BY_GAME = {
-    PATHFINDER_KINGMAKER: Path.home()
-    / "AppData"
-    / "LocalLow"
-    / "Owlcat Games"
-    / "Pathfinder Kingmaker",
-    PATHFINDER_WRATH: Path.home()
-    / "AppData"
-    / "LocalLow"
-    / "Owlcat Games"
-    / "Pathfinder Wrath Of The Righteous",
-}
 
 PATHFINDER_KINGMAKER_PORTRAIT_DIMENSIONS = (
     PortraitSize("Small.png", 185, 242),
@@ -47,22 +45,63 @@ PATHFINDER_WRATH_PORTRAIT_DIMENSIONS = (
     PortraitSize("Fulllength.png", 692, 1024),
 )
 
-PORTRAIT_DIMENSIONS_BY_GAME = {
-    PATHFINDER_KINGMAKER: PATHFINDER_KINGMAKER_PORTRAIT_DIMENSIONS,
-    PATHFINDER_WRATH: PATHFINDER_WRATH_PORTRAIT_DIMENSIONS,
-}
+GAME_CONFIGS = (
+    GameConfig(
+        PATHFINDER_KINGMAKER,
+        "Pathfinder Kingmaker",
+        PATHFINDER_KINGMAKER_PORTRAIT_DIMENSIONS,
+    ),
+    GameConfig(
+        PATHFINDER_WRATH,
+        "Pathfinder Wrath Of The Righteous",
+        PATHFINDER_WRATH_PORTRAIT_DIMENSIONS,
+    ),
+    GameConfig(
+        WARHAMMER_ROGUE_TRADER,
+        "Warhammer 40000 Rogue Trader",
+        PATHFINDER_KINGMAKER_PORTRAIT_DIMENSIONS,
+    ),
+    GameConfig(
+        WARHAMMER_DARK_HERESY,
+        "WHDH",
+        PATHFINDER_KINGMAKER_PORTRAIT_DIMENSIONS,
+    ),
+)
+GAME_CONFIGS_BY_NAME = {game_config.name: game_config for game_config in GAME_CONFIGS}
+OWLCAT_LOCALLOW_ROOT = Path.home() / "AppData" / "LocalLow" / "Owlcat Games"
+local_config = None
+local_config_path = None
 
 
 def get_available_games():
-    return list(PORTRAIT_DIMENSIONS_BY_GAME.keys())
+    return [game_config.name for game_config in GAME_CONFIGS]
+
+
+def get_game_config(game_name=None):
+    return GAME_CONFIGS_BY_NAME[get_game_name(game_name)]
+
+
+def get_next_game_name(game_name=None):
+    games = get_available_games()
+    current_game = get_game_name(game_name)
+    current_index = games.index(current_game)
+    return games[(current_index + 1) % len(games)]
+
+
+def get_builtin_appdata_locallow_folder(game_name=None):
+    return OWLCAT_LOCALLOW_ROOT / get_game_config(game_name).appdata_folder_name
 
 
 def get_default_appdata_locallow_folder(game_name=None):
-    return DEFAULT_APPDATA_LOCALLOW_PATHS_BY_GAME[get_game_name(game_name)]
+    game_name = get_game_name(game_name)
+    if local_config is None:
+        return get_builtin_appdata_locallow_folder(game_name)
+
+    return LocalConfigService.get_game_appdata_folder(local_config, game_name)
 
 
 def get_required_portrait_dimensions(game_name=None):
-    return PORTRAIT_DIMENSIONS_BY_GAME[get_game_name(game_name)]
+    return get_game_config(game_name).portrait_dimensions
 
 
 def get_full_length_portrait_size(game_name=None):
@@ -73,17 +112,42 @@ def get_game_name(game_name=None):
     if game_name is None:
         game_name = settings.game_name
 
-    if game_name not in PORTRAIT_DIMENSIONS_BY_GAME:
+    if game_name not in GAME_CONFIGS_BY_NAME:
         return PATHFINDER_KINGMAKER
 
     return game_name
 
 
-def set_game_name(game_name):
+def load_local_config(path=None):
+    global local_config, local_config_path
+
+    local_config_path = path
+    local_config = LocalConfigService.load_config(
+        GAME_CONFIGS,
+        PATHFINDER_KINGMAKER,
+        get_builtin_appdata_locallow_folder,
+        path=path,
+    )
+    return local_config
+
+
+def save_local_config(path=None):
+    if local_config is not None:
+        LocalConfigService.save_config(
+            local_config,
+            path=path if path is not None else local_config_path,
+        )
+
+
+def set_game_name(game_name, save=True):
     global GAME_NAME, APPDATA_LOCALLOW_FOLDER, OUTPUT_FOLDER
     global REQUIRED_PORTRAIT_DIMENSIONS, FULL_LENGTH_PORTRAIT_SIZE
 
     settings.game_name = get_game_name(game_name)
+    if save and local_config is not None:
+        LocalConfigService.set_selected_game(local_config, settings.game_name)
+        save_local_config()
+
     settings.appdata_locallow_folder = get_default_appdata_locallow_folder(
         settings.game_name
     )
@@ -95,16 +159,25 @@ def set_game_name(game_name):
     FULL_LENGTH_PORTRAIT_SIZE = get_full_length_portrait_size()
 
 
-def set_appdata_locallow_folder(folder):
+def set_appdata_locallow_folder(folder, save=True):
     global APPDATA_LOCALLOW_FOLDER, OUTPUT_FOLDER
 
     settings.appdata_locallow_folder = Path(folder)
     settings.output_folder = settings.appdata_locallow_folder / "Portraits"
+    if save and local_config is not None:
+        LocalConfigService.set_game_appdata_folder(
+            local_config,
+            settings.game_name,
+            settings.appdata_locallow_folder,
+        )
+        save_local_config()
+
     APPDATA_LOCALLOW_FOLDER = settings.appdata_locallow_folder
     OUTPUT_FOLDER = settings.output_folder
 
 
-set_game_name(settings.game_name)
+load_local_config()
+set_game_name(local_config["selected_game"], save=False)
 
 REQUIRED_PORTRAIT_DIMENSIONS = get_required_portrait_dimensions()
 FULL_LENGTH_PORTRAIT_SIZE = get_full_length_portrait_size()

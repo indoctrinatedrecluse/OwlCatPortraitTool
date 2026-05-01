@@ -23,6 +23,7 @@ pytest-cache-files-*
 # Environment files
 .env
 .envrc
+OwlcatPortraitTool.dat
 
 # Packaging artifacts
 build/

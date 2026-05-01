@@ -33,6 +33,13 @@ def test_image_to_pixmap_preserves_image_size(qt_app):
     assert pixmap.height() == 32
 
 
+def test_portrait_editor_has_separate_local_and_appdata_export_buttons(qt_app):
+    editor = UIQtRender.PortraitEditorTab()
+
+    assert editor.export_local_button.text() == "Export To Local Output"
+    assert editor.export_game_button.text() == "Export To AppData/Portraits"
+
+
 def test_load_preview_image_retries_with_preview_timeout(monkeypatch, qt_app):
     calls = []
     preview_image = Image.new("RGBA", (16, 24), (20, 40, 60, 255))
@@ -490,4 +497,39 @@ def test_settings_tab_game_change_updates_global_paths(qt_app):
     tab.change_game(GlobalsService.PATHFINDER_WRATH)
 
     assert GlobalsService.settings.game_name == GlobalsService.PATHFINDER_WRATH
+    assert tab.target_game_button.text() == GlobalsService.PATHFINDER_WRATH
     assert "Wrath Of The Righteous" in tab.appdata_path_label.text()
+
+
+def test_settings_tab_switch_target_game_button_cycles_games(qt_app):
+    GlobalsService.set_game_name(GlobalsService.PATHFINDER_KINGMAKER)
+    tab = UIQtRender.SettingsTab()
+    tab.ensure_current_game_path_exists = lambda: True
+
+    tab.switch_target_game()
+
+    assert GlobalsService.settings.game_name == GlobalsService.PATHFINDER_WRATH
+    assert tab.target_game_button.text() == GlobalsService.PATHFINDER_WRATH
+
+
+def test_settings_tab_missing_game_path_opens_folder_picker(monkeypatch, qt_app):
+    messages = []
+    selected_folder = "F:/Custom/Owlcat"
+    tab = UIQtRender.SettingsTab()
+    GlobalsService.set_appdata_locallow_folder("F:/Missing/Owlcat")
+    tab.refresh_path_labels()
+
+    monkeypatch.setattr(
+        UIQtRender.QtWidgets.QMessageBox,
+        "warning",
+        lambda *args: messages.append(args),
+    )
+    monkeypatch.setattr(
+        UIQtRender.QtWidgets.QFileDialog,
+        "getExistingDirectory",
+        lambda *args: selected_folder,
+    )
+
+    assert tab.ensure_current_game_path_exists()
+    assert messages
+    assert GlobalsService.settings.appdata_locallow_folder.as_posix() == selected_folder
