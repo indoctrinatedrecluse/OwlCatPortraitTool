@@ -28,7 +28,8 @@ OwlcatPortraitTool.dat
 # Packaging artifacts
 build/
 dist/
-release/
+release/*
+!release/OwlcatPortraitTool.zip
 *.spec
 *.egg-info/
 *.manifest
@@ -36,7 +37,6 @@ release/
 # Built executables and release packages
 *.exe
 *.msi
-OwlcatPortraitTool.zip
 *.7z
 *.tar.gz
 
