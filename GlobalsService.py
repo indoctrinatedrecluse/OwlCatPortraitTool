@@ -139,6 +139,45 @@ def save_local_config(path=None):
         )
 
 
+def get_window_settings():
+    return LocalConfigService.get_window_settings(local_config)
+
+
+def set_window_settings(x, y, width, height, save=True):
+    if local_config is None:
+        return
+
+    LocalConfigService.set_window_settings(local_config, x, y, width, height)
+    if save:
+        save_local_config()
+
+
+def get_selected_tab():
+    return LocalConfigService.get_selected_tab(local_config)
+
+
+def set_selected_tab(tab_index, save=True):
+    if local_config is None:
+        return
+
+    LocalConfigService.set_selected_tab(local_config, tab_index)
+    if save:
+        save_local_config()
+
+
+def get_recent_export_folder(export_kind):
+    return LocalConfigService.get_recent_export_folder(local_config, export_kind)
+
+
+def set_recent_export_folder(export_kind, folder, save=True):
+    if local_config is None:
+        return
+
+    LocalConfigService.set_recent_export_folder(local_config, export_kind, folder)
+    if save:
+        save_local_config()
+
+
 def set_game_name(game_name, save=True):
     global GAME_NAME, APPDATA_LOCALLOW_FOLDER, OUTPUT_FOLDER
     global REQUIRED_PORTRAIT_DIMENSIONS, FULL_LENGTH_PORTRAIT_SIZE

@@ -16,6 +16,10 @@ DIST_DIR = PROJECT_ROOT / "dist"
 RELEASE_DIR = PROJECT_ROOT / "release"
 SPEC_FILE = PROJECT_ROOT / f"{APP_NAME}.spec"
 CONFIG_FILE = PROJECT_ROOT / LocalConfigService.CONFIG_FILE_NAME
+ASSETS_DIR = PROJECT_ROOT / "assets"
+ICON_FILE = ASSETS_DIR / "OwlcatPortraitTool.ico"
+VERSION_FILE = PROJECT_ROOT / "version_info.txt"
+RELEASE_PACKAGE = RELEASE_DIR / f"{APP_NAME}.zip"
 
 
 def initialize_local_config():
@@ -46,6 +50,10 @@ def build_pyinstaller_command(onefile=False):
         "--add-data",
         f"{CONFIG_FILE}{';' if sys.platform == 'win32' else ':'}.",
     ]
+    if ICON_FILE.exists():
+        command.extend(["--icon", str(ICON_FILE)])
+    if VERSION_FILE.exists():
+        command.extend(["--version-file", str(VERSION_FILE)])
 
     if onefile:
         command.append("--onefile")
@@ -65,7 +73,47 @@ def remove_build_outputs():
         SPEC_FILE.unlink()
 
 
-def run_build(onefile=False, clean=True, dry_run=False):
+def get_built_executable_path(onefile=False):
+    if onefile:
+        return RELEASE_DIR / f"{APP_NAME}.exe"
+
+    return RELEASE_DIR / APP_NAME / f"{APP_NAME}.exe"
+
+
+def package_release(onefile=False):
+    executable_path = get_built_executable_path(onefile=onefile)
+    if not executable_path.exists():
+        raise FileNotFoundError(f"Built executable not found: {executable_path}")
+
+    if RELEASE_PACKAGE.exists():
+        RELEASE_PACKAGE.unlink()
+
+    if onefile:
+        package_root = executable_path.parent
+        base_name = executable_path.stem
+    else:
+        package_root = executable_path.parent.parent
+        base_name = executable_path.parent.name
+
+    archive_base = RELEASE_DIR / base_name
+    created_archive = shutil.make_archive(
+        str(archive_base),
+        "zip",
+        root_dir=package_root,
+        base_dir=base_name if not onefile else executable_path.name,
+    )
+    return Path(created_archive)
+
+
+def smoke_test_executable(onefile=False):
+    executable_path = get_built_executable_path(onefile=onefile)
+    if not executable_path.exists():
+        raise FileNotFoundError(f"Built executable not found: {executable_path}")
+
+    subprocess.run([str(executable_path), "--smoke-test"], check=True)
+
+
+def run_build(onefile=False, clean=True, dry_run=False, package=False, smoke_test=False):
     if not ENTRYPOINT.exists():
         raise FileNotFoundError(f"Application entrypoint not found: {ENTRYPOINT}")
 
@@ -89,9 +137,14 @@ def run_build(onefile=False, clean=True, dry_run=False):
     except subprocess.CalledProcessError as error:
         return error.returncode
 
-    output_path = RELEASE_DIR / f"{APP_NAME}.exe"
-    if not onefile:
-        output_path = RELEASE_DIR / APP_NAME / f"{APP_NAME}.exe"
+    output_path = get_built_executable_path(onefile=onefile)
+
+    if smoke_test:
+        smoke_test_executable(onefile=onefile)
+
+    if package:
+        package_path = package_release(onefile=onefile)
+        print(f"Packaged release: {package_path}")
 
     print(f"Built executable: {output_path}")
     return 0
@@ -116,6 +169,16 @@ def parse_args():
         action="store_true",
         help="Print the PyInstaller command without running it.",
     )
+    parser.add_argument(
+        "--package",
+        action="store_true",
+        help="Create a release zip after building.",
+    )
+    parser.add_argument(
+        "--smoke-test",
+        action="store_true",
+        help="Run the packaged executable smoke test after building.",
+    )
     return parser.parse_args()
 
 
@@ -126,5 +189,7 @@ if __name__ == "__main__":
             onefile=args.onefile,
             clean=not args.no_clean,
             dry_run=args.dry_run,
+            package=args.package,
+            smoke_test=args.smoke_test,
         )
     )

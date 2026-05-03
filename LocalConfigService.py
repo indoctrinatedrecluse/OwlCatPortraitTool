@@ -21,6 +21,17 @@ def build_default_config(game_configs, default_game_name, default_path_provider)
     return {
         "version": CONFIG_VERSION,
         "selected_game": default_game_name,
+        "selected_tab": 0,
+        "window": {
+            "x": 100,
+            "y": 100,
+            "width": 800,
+            "height": 600,
+        },
+        "recent_exports": {
+            "local": "",
+            "game": "",
+        },
         "games": {
             game_config.name: {
                 "appdata_locallow_folder": str(default_path_provider(game_config.name))
@@ -69,6 +80,8 @@ def load_config(game_configs, default_game_name, default_path_provider, path=Non
 
 def normalize_config(config, default_config):
     normalized = default_config.copy()
+    normalized["window"] = default_config["window"].copy()
+    normalized["recent_exports"] = default_config["recent_exports"].copy()
     normalized["games"] = {
         game_name: game_settings.copy()
         for game_name, game_settings in default_config["games"].items()
@@ -77,6 +90,24 @@ def normalize_config(config, default_config):
     if isinstance(config, dict):
         if config.get("selected_game") in normalized["games"]:
             normalized["selected_game"] = config["selected_game"]
+
+        selected_tab = config.get("selected_tab")
+        if isinstance(selected_tab, int) and selected_tab >= 0:
+            normalized["selected_tab"] = selected_tab
+
+        saved_window = config.get("window", {})
+        if isinstance(saved_window, dict):
+            for key in ("x", "y", "width", "height"):
+                value = saved_window.get(key)
+                if isinstance(value, int):
+                    normalized["window"][key] = value
+
+        saved_recent_exports = config.get("recent_exports", {})
+        if isinstance(saved_recent_exports, dict):
+            for key in ("local", "game"):
+                value = saved_recent_exports.get(key)
+                if value:
+                    normalized["recent_exports"][key] = str(value)
 
         saved_games = config.get("games", {})
         if isinstance(saved_games, dict):
@@ -112,3 +143,33 @@ def set_game_appdata_folder(config, game_name, folder):
 def set_selected_game(config, game_name):
     if game_name in config["games"]:
         config["selected_game"] = game_name
+
+
+def get_window_settings(config):
+    return config["window"].copy()
+
+
+def set_window_settings(config, x, y, width, height):
+    config["window"] = {
+        "x": int(x),
+        "y": int(y),
+        "width": int(width),
+        "height": int(height),
+    }
+
+
+def get_selected_tab(config):
+    return int(config.get("selected_tab", 0))
+
+
+def set_selected_tab(config, tab_index):
+    config["selected_tab"] = int(tab_index)
+
+
+def get_recent_export_folder(config, export_kind):
+    return Path(config["recent_exports"].get(export_kind, ""))
+
+
+def set_recent_export_folder(config, export_kind, folder):
+    if export_kind in config["recent_exports"]:
+        config["recent_exports"][export_kind] = str(Path(folder))

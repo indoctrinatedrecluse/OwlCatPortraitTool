@@ -2,7 +2,9 @@
 
 All notable project changes are listed by commit.
 
-## Commit 3 - Pending
+## v0.3.0
+
+**feat: Add data-driven game config and Warhammer support**
 
 ### Added
 

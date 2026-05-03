@@ -1,6 +1,7 @@
 from io import BytesIO
 import random
 import string
+import sys
 from pathlib import Path
 
 import requests
@@ -11,8 +12,14 @@ from GlobalsService import (
     get_full_length_portrait_size,
     get_next_game_name,
     get_required_portrait_dimensions,
+    get_recent_export_folder,
+    get_selected_tab,
+    get_window_settings,
     set_appdata_locallow_folder,
     set_game_name,
+    set_recent_export_folder,
+    set_selected_tab,
+    set_window_settings,
     settings,
 )
 from SearchService import search_portraits_by_tags
@@ -31,6 +38,9 @@ MAX_PREVIEW_LOAD_ATTEMPTS = 5
 PREVIEW_REQUEST_TIMEOUT_SECONDS = 8
 RESULT_IMAGE_URL_ROLE = QtCore.Qt.UserRole
 RESULT_PREVIEW_FAILURE_ROLE = QtCore.Qt.UserRole + 1
+SOURCE_LOAD_LOCAL = "local"
+SOURCE_LOAD_URL = "url"
+LOCAL_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 LOCAL_OUTPUT_FOLDER = Path(__file__).resolve().parent / "output"
 PORTRAIT_FOLDER_NAME_LENGTH = 16
 PORTRAIT_FOLDER_ALPHABET = string.ascii_uppercase + string.digits
@@ -40,6 +50,7 @@ UNSAVED_EDITOR_CONFIRMATION_TITLE = "Leave Portrait Editor?"
 UNSAVED_EDITOR_CONFIRMATION_MESSAGE = (
     "You have unsaved portrait changes. Leave the Portrait Editor without exporting?"
 )
+APP_VERSION = "0.3.0"
 
 
 class PreviewLoaderSignals(QtCore.QObject):
@@ -69,13 +80,42 @@ class PreviewLoader(QtCore.QRunnable):
         self.signals.loaded.emit(self.generation, self.result_index, image)
 
 
+class SourceImageLoaderSignals(QtCore.QObject):
+    loaded = QtCore.pyqtSignal(int, str, object)
+    failed = QtCore.pyqtSignal(int, str, str)
+
+
+class SourceImageLoader(QtCore.QRunnable):
+    def __init__(self, generation, source_kind, source):
+        super().__init__()
+        self.generation = generation
+        self.source_kind = source_kind
+        self.source = source
+        self.signals = SourceImageLoaderSignals()
+
+    def run(self):
+        try:
+            image = load_source_image(self.source_kind, self.source)
+        except Exception as error:
+            self.signals.failed.emit(self.generation, self.source, str(error))
+            return
+
+        self.signals.loaded.emit(self.generation, self.source, image)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window with one tab per screen."""
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Owlcat Portrait Tool")
-        self.setGeometry(100, 100, 800, 600)
+        self.setWindowTitle(f"Owlcat Portrait Tool {APP_VERSION}")
+        window_settings = get_window_settings()
+        self.setGeometry(
+            window_settings["x"],
+            window_settings["y"],
+            window_settings["width"],
+            window_settings["height"],
+        )
 
         self.tab_widget = QtWidgets.QTabWidget()
         self.setCentralWidget(self.tab_widget)
@@ -86,6 +126,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.previous_tab_index = self.tab_widget.currentIndex()
         self.reverting_tab_change = False
         self.tab_widget.currentChanged.connect(self.handle_tab_changed)
+        selected_tab = min(get_selected_tab(), self.tab_widget.count() - 1)
+        self.tab_widget.setCurrentIndex(selected_tab)
+        self.previous_tab_index = selected_tab
 
     def setup_portrait_editor_tab(self):
         self.portrait_editor_tab = PortraitEditorTab()
@@ -106,10 +149,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.portrait_editor_tab.set_source_url(image_url)
         self.show_portrait_editor_tab()
 
+    def open_portrait_editor_with_file(self, image_path):
+        self.portrait_editor_tab.set_source_file(image_path)
+        self.show_portrait_editor_tab()
+
     def handle_tab_changed(self, tab_index):
         if self.reverting_tab_change:
             return
 
+        set_selected_tab(tab_index)
         previous_tab_index = self.previous_tab_index
         self.previous_tab_index = tab_index
 
@@ -128,6 +176,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.reverting_tab_change = True
         self.tab_widget.setCurrentIndex(previous_tab_index)
         self.previous_tab_index = previous_tab_index
+        set_selected_tab(previous_tab_index)
         self.reverting_tab_change = False
 
     def confirm_leave_portrait_editor(self):
@@ -164,6 +213,14 @@ class MainWindow(QtWidgets.QMainWindow):
             event.ignore()
             return
 
+        geometry = self.geometry()
+        set_window_settings(
+            geometry.x(),
+            geometry.y(),
+            geometry.width(),
+            geometry.height(),
+        )
+        set_selected_tab(self.tab_widget.currentIndex())
         super().closeEvent(event)
 
 
@@ -172,22 +229,70 @@ class PortraitEditorTab(QtWidgets.QWidget):
 
     def __init__(self):
         super().__init__()
+        self.setAcceptDrops(True)
 
         layout = QtWidgets.QVBoxLayout()
         self.setLayout(layout)
 
         self.source_url = None
+        self.source_file = None
         self.source_image = None
         self.has_unsaved_changes = False
+        self.source_generation = 0
+        self.source_thread_pool = QtCore.QThreadPool(self)
+        self.source_thread_pool.setMaxThreadCount(1)
+        self.last_local_export_folder = get_recent_export_folder("local")
+        self.last_game_export_folder = get_recent_export_folder("game")
 
         self.source_label = QtWidgets.QLabel("No portrait selected")
         self.source_label.setWordWrap(True)
         self.source_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         layout.addWidget(self.source_label)
 
+        load_button_layout = QtWidgets.QHBoxLayout()
+        layout.addLayout(load_button_layout)
+
+        self.load_file_button = QtWidgets.QPushButton("Load Local Image...")
+        self.load_file_button.clicked.connect(self.choose_source_file)
+        load_button_layout.addWidget(self.load_file_button)
+
         self.crop_canvas = PortraitCropCanvas()
         self.crop_canvas.cropChanged.connect(self.mark_unsaved_changes)
+        self.crop_canvas.cropChanged.connect(self.update_export_previews)
         layout.addWidget(self.crop_canvas, stretch=1)
+
+        zoom_layout = QtWidgets.QHBoxLayout()
+        layout.addLayout(zoom_layout)
+
+        self.zoom_out_button = QtWidgets.QPushButton("Zoom Out")
+        self.zoom_out_button.clicked.connect(self.zoom_out)
+        self.zoom_out_button.setEnabled(False)
+        zoom_layout.addWidget(self.zoom_out_button)
+
+        self.zoom_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.zoom_slider.setRange(100, 300)
+        self.zoom_slider.setValue(100)
+        self.zoom_slider.setEnabled(False)
+        self.zoom_slider.valueChanged.connect(self.apply_zoom_slider_value)
+        zoom_layout.addWidget(self.zoom_slider)
+
+        self.zoom_in_button = QtWidgets.QPushButton("Zoom In")
+        self.zoom_in_button.clicked.connect(self.zoom_in)
+        self.zoom_in_button.setEnabled(False)
+        zoom_layout.addWidget(self.zoom_in_button)
+
+        self.preview_group = QtWidgets.QGroupBox("Export Preview")
+        preview_layout = QtWidgets.QHBoxLayout()
+        self.preview_group.setLayout(preview_layout)
+        layout.addWidget(self.preview_group)
+        self.preview_labels = {}
+        for portrait_size in get_required_portrait_dimensions():
+            preview_label = QtWidgets.QLabel(portrait_size.name)
+            preview_label.setAlignment(QtCore.Qt.AlignCenter)
+            preview_label.setMinimumSize(96, 120)
+            preview_label.setFrameShape(QtWidgets.QFrame.Box)
+            preview_layout.addWidget(preview_label)
+            self.preview_labels[portrait_size.name] = preview_label
 
         button_layout = QtWidgets.QHBoxLayout()
         layout.addLayout(button_layout)
@@ -202,38 +307,94 @@ class PortraitEditorTab(QtWidgets.QWidget):
         self.export_game_button.setEnabled(False)
         button_layout.addWidget(self.export_game_button)
 
+        self.open_local_folder_button = QtWidgets.QPushButton("Open Local Folder")
+        self.open_local_folder_button.clicked.connect(self.open_last_local_export_folder)
+        self.open_local_folder_button.setEnabled(self.last_local_export_folder.exists())
+        button_layout.addWidget(self.open_local_folder_button)
+
+        self.open_game_folder_button = QtWidgets.QPushButton("Open AppData Folder")
+        self.open_game_folder_button.clicked.connect(self.open_last_game_export_folder)
+        self.open_game_folder_button.setEnabled(self.last_game_export_folder.exists())
+        button_layout.addWidget(self.open_game_folder_button)
+
         self.status_label = QtWidgets.QLabel()
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
     def set_source_url(self, image_url):
-        self.has_unsaved_changes = False
-        self.source_url = image_url
-        self.source_label.setText(f"Selected portrait source:\n{image_url}")
-        self.status_label.setText("Loading image...")
-        self.export_local_button.setEnabled(False)
-        self.export_game_button.setEnabled(False)
-        QtWidgets.QApplication.processEvents()
+        self.load_source(SOURCE_LOAD_URL, image_url)
 
-        try:
-            self.source_image = get_image_from_url(image_url).convert("RGBA")
-        except Exception as error:
-            self.source_image = None
-            self.crop_canvas.clear_image()
-            self.status_label.setText(f"Could not load image: {error}")
+    def set_source_file(self, image_path):
+        self.load_source(SOURCE_LOAD_LOCAL, str(image_path))
+
+    def choose_source_file(self):
+        selected_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select Portrait Image",
+            str(Path.home()),
+            "Images (*.png *.jpg *.jpeg *.webp)",
+        )
+        if selected_file:
+            self.set_source_file(selected_file)
+
+    def load_source(self, source_kind, source):
+        self.has_unsaved_changes = False
+        self.source_url = source if source_kind == SOURCE_LOAD_URL else None
+        self.source_file = Path(source) if source_kind == SOURCE_LOAD_LOCAL else None
+        self.source_generation += 1
+        self.source_thread_pool.clear()
+
+        source_label = "URL" if source_kind == SOURCE_LOAD_URL else "File"
+        self.source_label.setText(f"Selected portrait {source_label.lower()}:\n{source}")
+        self.status_label.setText("Loading image...")
+        self.set_editor_actions_enabled(False)
+        self.clear_export_previews()
+
+        worker = SourceImageLoader(self.source_generation, source_kind, source)
+        worker.signals.loaded.connect(self.source_loaded)
+        worker.signals.failed.connect(self.source_failed)
+        self.source_thread_pool.start(worker)
+
+    def source_loaded(self, generation, source, image):
+        if generation != self.source_generation:
             return
 
+        self.source_image = image.convert("RGBA")
         self.crop_canvas.set_image(self.source_image)
-        self.export_local_button.setEnabled(True)
-        self.export_game_button.setEnabled(True)
+        self.zoom_slider.blockSignals(True)
+        self.zoom_slider.setValue(100)
+        self.zoom_slider.blockSignals(False)
+        self.set_editor_actions_enabled(True)
+        self.update_export_previews()
         self.status_label.setText("Drag the image to position it inside the crop outline.")
+
+    def source_failed(self, generation, source, error):
+        if generation != self.source_generation:
+            return
+
+        self.source_image = None
+        self.crop_canvas.clear_image()
+        self.clear_export_previews()
+        self.set_editor_actions_enabled(False)
+        self.status_label.setText(format_image_load_error(source, error))
+
+    def set_editor_actions_enabled(self, enabled):
+        self.export_local_button.setEnabled(enabled)
+        self.export_game_button.setEnabled(enabled)
+        self.zoom_slider.setEnabled(enabled)
+        self.zoom_in_button.setEnabled(enabled)
+        self.zoom_out_button.setEnabled(enabled)
 
     def mark_unsaved_changes(self):
         if self.source_image is not None:
             self.has_unsaved_changes = True
 
     def export_local(self):
-        self.export_portrait_set(LOCAL_OUTPUT_FOLDER)
+        output_folder = self.export_portrait_set(LOCAL_OUTPUT_FOLDER)
+        if output_folder:
+            self.last_local_export_folder = output_folder
+            set_recent_export_folder("local", output_folder)
+            self.open_local_folder_button.setEnabled(True)
 
     def export_to_game(self):
         main_window = self.window()
@@ -241,14 +402,22 @@ class PortraitEditorTab(QtWidgets.QWidget):
             if not main_window.ensure_current_game_path_exists():
                 return
 
-        self.export_portrait_set(settings.output_folder)
+        output_folder = self.export_portrait_set(settings.output_folder)
+        if output_folder:
+            self.last_game_export_folder = output_folder
+            set_recent_export_folder("game", output_folder)
+            self.open_game_folder_button.setEnabled(True)
 
     def export_portrait_set(self, output_root):
         if self.source_image is None:
             self.status_label.setText("Load an image before exporting.")
-            return
+            return None
 
-        output_folder = create_unique_portrait_folder(output_root)
+        try:
+            output_folder = create_unique_portrait_folder(output_root)
+        except OSError as error:
+            self.status_label.setText(f"Could not create export folder: {error}")
+            return None
 
         cropped_image = self.crop_canvas.get_cropped_image()
         for portrait_size in get_required_portrait_dimensions():
@@ -260,6 +429,109 @@ class PortraitEditorTab(QtWidgets.QWidget):
 
         self.has_unsaved_changes = False
         self.status_label.setText(f"Exported portrait set to:\n{output_folder}")
+        return output_folder
+
+    def update_export_previews(self):
+        if self.source_image is None:
+            self.clear_export_previews()
+            return
+
+        try:
+            cropped_image = self.crop_canvas.get_cropped_image()
+        except ValueError:
+            self.clear_export_previews()
+            return
+
+        for portrait_size in get_required_portrait_dimensions():
+            preview_label = self.preview_labels.get(portrait_size.name)
+            if preview_label is None:
+                continue
+
+            preview_image = cropped_image.resize(
+                (portrait_size.width, portrait_size.height),
+                Image.Resampling.LANCZOS,
+            )
+            pixmap = image_to_pixmap(preview_image).scaled(
+                preview_label.size(),
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation,
+            )
+            preview_label.setText("")
+            preview_label.setPixmap(pixmap)
+
+    def clear_export_previews(self):
+        for portrait_size in get_required_portrait_dimensions():
+            preview_label = self.preview_labels.get(portrait_size.name)
+            if preview_label:
+                preview_label.clear()
+                preview_label.setText(portrait_size.name)
+
+    def zoom_in(self):
+        self.zoom_slider.setValue(min(self.zoom_slider.maximum(), self.zoom_slider.value() + 10))
+
+    def zoom_out(self):
+        self.zoom_slider.setValue(max(self.zoom_slider.minimum(), self.zoom_slider.value() - 10))
+
+    def apply_zoom_slider_value(self, value):
+        if self.source_image is None:
+            return
+
+        minimum_scale = self.crop_canvas.minimum_cover_scale()
+        self.crop_canvas.set_zoom_scale(minimum_scale * (value / 100))
+        self.mark_unsaved_changes()
+        self.update_export_previews()
+
+    def open_last_local_export_folder(self):
+        self.open_folder(self.last_local_export_folder)
+
+    def open_last_game_export_folder(self):
+        self.open_folder(self.last_game_export_folder)
+
+    def open_folder(self, folder):
+        if not folder:
+            return False
+
+        folder = Path(folder)
+        if not folder.exists():
+            self.status_label.setText(f"Folder does not exist:\n{folder}")
+            return False
+
+        return QtGui.QDesktopServices.openUrl(
+            QtCore.QUrl.fromLocalFile(str(folder))
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_export_previews()
+
+    def closeEvent(self, event):
+        self.source_thread_pool.clear()
+        self.source_thread_pool.waitForDone(100)
+        super().closeEvent(event)
+
+    def dragEnterEvent(self, event):
+        if self.get_local_image_path_from_drop(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        image_path = self.get_local_image_path_from_drop(event.mimeData())
+        if image_path:
+            self.set_source_file(image_path)
+            event.acceptProposedAction()
+
+    def get_local_image_path_from_drop(self, mime_data):
+        if not mime_data.hasUrls():
+            return None
+
+        for url in mime_data.urls():
+            if not url.isLocalFile():
+                continue
+
+            image_path = Path(url.toLocalFile())
+            if image_path.suffix.lower() in LOCAL_IMAGE_EXTENSIONS:
+                return str(image_path)
+
+        return None
 
 
 class PortraitCropCanvas(QtWidgets.QWidget):
@@ -306,6 +578,39 @@ class PortraitCropCanvas(QtWidgets.QWidget):
             crop_rect.center().y() - image_height / 2,
         )
         self.constrain_image_to_crop()
+
+    def minimum_cover_scale(self):
+        if self.source_image is None:
+            return 1.0
+
+        crop_rect = self.get_crop_rect()
+        return max(
+            crop_rect.width() / self.source_image.width,
+            crop_rect.height() / self.source_image.height,
+        )
+
+    def set_zoom_scale(self, image_scale):
+        if self.source_image is None:
+            return
+
+        old_rect = self.get_image_rect()
+        anchor = self.get_crop_rect().center()
+        if old_rect.width() > 0 and old_rect.height() > 0:
+            relative_x = (anchor.x() - old_rect.left()) / old_rect.width()
+            relative_y = (anchor.y() - old_rect.top()) / old_rect.height()
+        else:
+            relative_x = 0.5
+            relative_y = 0.5
+
+        self.image_scale = max(self.minimum_cover_scale(), image_scale)
+        new_width = self.source_image.width * self.image_scale
+        new_height = self.source_image.height * self.image_scale
+        self.image_offset = QtCore.QPointF(
+            anchor.x() - new_width * relative_x,
+            anchor.y() - new_height * relative_y,
+        )
+        self.constrain_image_to_crop()
+        self.update()
 
     def get_crop_rect(self):
         portrait_size = get_full_length_portrait_size()
@@ -461,6 +766,38 @@ def image_to_pixmap(image):
         QtGui.QImage.Format_RGBA8888,
     )
     return QtGui.QPixmap.fromImage(qt_image.copy())
+
+
+def load_source_image(source_kind, source):
+    if source_kind == SOURCE_LOAD_URL:
+        return get_image_from_url(source).convert("RGBA")
+
+    if source_kind == SOURCE_LOAD_LOCAL:
+        return load_image_from_file(source).convert("RGBA")
+
+    raise ValueError("Unsupported image source.")
+
+
+def load_image_from_file(image_path):
+    image_path = Path(image_path)
+    if image_path.suffix.lower() not in LOCAL_IMAGE_EXTENSIONS:
+        raise ValueError("Select a supported image file: PNG, JPG, JPEG, or WEBP.")
+
+    try:
+        with Image.open(image_path) as image:
+            image.verify()
+        return Image.open(image_path)
+    except OSError as error:
+        raise ValueError(f"Could not open image file: {error}") from error
+
+
+def format_image_load_error(source, error):
+    return (
+        "Could not load image.\n"
+        f"Source: {source}\n"
+        f"Reason: {error}\n"
+        "Try another image, check the file path, or use a different host."
+    )
 
 
 def load_preview_image(result):
