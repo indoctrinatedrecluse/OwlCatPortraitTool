@@ -2,6 +2,17 @@
 
 All notable project changes are listed by commit.
 
+## v0.5.5
+
+### feat: Add manual workflow trigger for testing
+
+- **Added**
+  - **CI/CD**:
+    - Added a `workflow_dispatch` trigger to the release workflow, enabling manual runs from the GitHub Actions UI for testing the build process.
+- **Changed**
+  - **CI/CD**:
+    - The release creation and asset upload steps in the workflow are now conditional and will only run on tag pushes, making manual runs safe.
+
 ## v0.5.4
 
 ### fix: Correct workflow file location to enable CI
