@@ -1,5 +1,6 @@
 from io import BytesIO
 
+import pytest
 from PIL import Image
 
 from RequestHeaders import IMAGE_REQUEST_HEADERS, JSON_REQUEST_HEADERS
@@ -42,54 +43,9 @@ def test_is_image_url_accepts_supported_image_extensions_and_query_strings():
     assert not SearchService.is_image_url("https://example.com/a.mp4")
 
 
-def test_extract_image_results_handles_flat_booru_shape():
-    results = SearchService.extract_image_results(
-        [
-            {
-                "file_url": "https://example.com/full.jpg",
-                "preview_url": "https://example.com/preview.jpg",
-                "width": "800",
-                "height": "1200",
-            }
-        ]
-    )
-
-    assert len(results) == 1
-    assert results[0].image_url == "https://example.com/full.jpg"
-    assert results[0].preview_url == "https://example.com/preview.jpg"
-    assert results[0].width == 800
-    assert results[0].height == 1200
-
-
-def test_extract_image_results_handles_nested_danbooru_style_shape():
-    results = SearchService.extract_image_results(
-        {
-            "posts": [
-                {
-                    "file": {
-                        "url": "https://example.com/full.png",
-                        "width": 900,
-                        "height": 1300,
-                    },
-                    "preview": {"url": "https://example.com/preview.png"},
-                }
-            ]
-        }
-    )
-
-    assert len(results) == 1
-    assert results[0].image_url == "https://example.com/full.png"
-    assert results[0].preview_url == "https://example.com/preview.png"
-    assert results[0].width == 900
-    assert results[0].height == 1300
-
-
 def test_search_portraits_by_tags_deduplicates_and_skips_non_images(monkeypatch):
-    monkeypatch.setattr(SearchService, "BOORU_SITES", ["https://example.com/api?tags={tags}"])
-
-    def fake_get(url, timeout, headers):
+    def fake_api_request(url):
         assert "tags=vampire" in url
-        assert headers == JSON_REQUEST_HEADERS
         return FakeResponse(
             [
                 {"file_url": "https://example.com/a.jpg"},
@@ -99,9 +55,11 @@ def test_search_portraits_by_tags_deduplicates_and_skips_non_images(monkeypatch)
             ]
         )
 
-    monkeypatch.setattr(SearchService.requests, "get", fake_get)
+    monkeypatch.setattr(SearchService, "_make_api_request", fake_api_request)
 
-    results = SearchService.search_portraits_by_tags(["vampire"], max_results=10)
+    results = SearchService.search_portraits_by_tags(
+        ["vampire"], "Safebooru", limit=10
+    )
 
     assert [result.image_url for result in results] == [
         "https://example.com/a.jpg",
@@ -110,10 +68,7 @@ def test_search_portraits_by_tags_deduplicates_and_skips_non_images(monkeypatch)
 
 
 def test_search_portraits_by_tags_obeys_max_results(monkeypatch):
-    monkeypatch.setattr(SearchService, "BOORU_SITES", ["https://example.com/api?tags={tags}"])
-
-    def fake_get(url, timeout, headers):
-        assert headers == JSON_REQUEST_HEADERS
+    def fake_api_request(url):
         return FakeResponse(
             [
                 {"file_url": "https://example.com/a.jpg"},
@@ -122,15 +77,97 @@ def test_search_portraits_by_tags_obeys_max_results(monkeypatch):
             ]
         )
 
-    monkeypatch.setattr(SearchService.requests, "get", fake_get)
+    monkeypatch.setattr(SearchService, "_make_api_request", fake_api_request)
 
-    results = SearchService.search_portraits_by_tags("vampire", max_results=2)
+    results = SearchService.search_portraits_by_tags("vampire", "Safebooru", limit=2)
 
     assert [result.image_url for result in results] == [
         "https://example.com/a.jpg",
         "https://example.com/b.jpg",
     ]
 
+
+def test_search_portraits_by_tags_handles_pagination_schemes(monkeypatch):
+    calls = []
+
+    def fake_api_request(url):
+        calls.append(url)
+        return FakeResponse([])
+
+    monkeypatch.setattr(SearchService, "_make_api_request", fake_api_request)
+
+    # Gelbooru (0-indexed pid)
+    SearchService.search_portraits_by_tags("test", "Safebooru", page=3)
+    assert "pid=2" in calls[-1]
+
+    # Danbooru (1-indexed page)
+    SearchService.search_portraits_by_tags("test", "Danbooru", page=3)
+    assert "page=3" in calls[-1]
+
+
+def test_search_portraits_by_tags_limits_tags_for_danbooru(monkeypatch):
+    calls = []
+
+    def fake_api_request(url):
+        calls.append(url)
+        return FakeResponse([])
+
+    monkeypatch.setattr(SearchService, "_make_api_request", fake_api_request)
+
+    SearchService.search_portraits_by_tags(["a", "b", "c"], "Danbooru")
+    assert "tags=a%20b" in calls[-1]
+    assert "c" not in calls[-1]
+
+
+def test_search_portraits_by_tags_handles_derpibooru(monkeypatch):
+    def fake_api_request(url):
+        assert "derpibooru.org" in url
+        return {
+            "images": [
+                {
+                    "width": 100,
+                    "height": 200,
+                    "representations": {
+                        "full": "https://example.com/derpi.png",
+                        "thumb": "https://example.com/derpi_thumb.png",
+                    },
+                }
+            ]
+        }
+
+    monkeypatch.setattr(SearchService, "_make_api_request", fake_api_request)
+
+    results = SearchService.search_portraits_by_tags("test", "Derpibooru")
+
+    assert len(results) == 1
+    assert results[0].image_url == "https://example.com/derpi.png"
+    assert results[0].preview_url == "https://example.com/derpi_thumb.png"
+
+
+@pytest.mark.parametrize(
+    "booru_name, expected_handler_name",
+    [
+        ("Safebooru", "_search_gelbooru"),
+        ("Danbooru", "_search_danbooru"),
+        ("Derpibooru", "_search_derpibooru"),
+        ("HypnoHub", "_search_danbooru"),
+        ("Tbib", "_search_gelbooru"),
+    ],
+)
+def test_search_portraits_by_tags_dispatches_to_correct_handler(
+    monkeypatch, booru_name, expected_handler_name
+):
+    handler_calls = []
+
+    def mock_handler(config, tags, page, limit):
+        handler_calls.append(True)
+        return []
+
+    monkeypatch.setattr(SearchService, expected_handler_name, mock_handler)
+
+    SearchService.search_portraits_by_tags("test", booru_name)
+
+    assert len(handler_calls) == 1
 
 def test_get_image_dimensions_reads_downloaded_image_size(monkeypatch):
     def fake_get(url, headers, timeout):

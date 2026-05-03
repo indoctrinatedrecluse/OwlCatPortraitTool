@@ -9,6 +9,7 @@ PATHFINDER_WRATH = "Pathfinder Wrath of the Righteous"
 WARHAMMER_ROGUE_TRADER = "Warhammer 40k: Rogue Trader"
 WARHAMMER_DARK_HERESY = "Warhammer 40k: Dark Heresy"
 
+MAX_RECENT_FILES = 10
 
 @dataclass(frozen=True)
 class PortraitSize:
@@ -174,6 +175,58 @@ def set_recent_export_folder(export_kind, folder, save=True):
         return
 
     LocalConfigService.set_recent_export_folder(local_config, export_kind, folder)
+    if save:
+        save_local_config()
+
+
+def get_recent_files():
+    """Return the list of recently opened file paths."""
+    if local_config is None:
+        return []
+    return LocalConfigService.get_recent_files(local_config)
+
+
+def add_recent_file(file_path, save=True):
+    """Add a file to the top of the recent files list."""
+    if local_config is None:
+        return
+    LocalConfigService.add_recent_file(local_config, file_path, max_files=MAX_RECENT_FILES)
+    if save:
+        save_local_config()
+
+
+def remove_recent_file(file_path, save=True):
+    """Remove a file from the recent files list."""
+    if local_config is None:
+        return
+    LocalConfigService.remove_recent_file(local_config, file_path)
+    if save:
+        save_local_config()
+
+
+def clear_recent_files(save=True):
+    """Clear all files from the recent files list."""
+    if local_config is None:
+        return
+    LocalConfigService.clear_recent_files(local_config)
+    if save:
+        save_local_config()
+
+
+def get_selected_booru():
+    """Return the last-selected booru site name from local config."""
+    if local_config is None:
+        return "Safebooru"
+
+    return LocalConfigService.get_selected_booru(local_config)
+
+
+def set_selected_booru(booru_name, save=True):
+    """Update the last-selected booru site name in local config."""
+    if local_config is None:
+        return
+
+    LocalConfigService.set_selected_booru(local_config, booru_name)
     if save:
         save_local_config()
 

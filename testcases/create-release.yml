@@ -1,0 +1,57 @@
+name: Create Release
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Get project version
+        id: get_version
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Path version_info.txt | Select-String -Pattern "FileVersion', '([0-9.]+)'").Matches.Groups[1].Value
+          echo "VERSION=v$version" >> $env:GITHUB_ENV
+          echo "version_tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Check if tag exists
+        id: check_tag
+        uses: mukunku/tag-exists-action@v1.4.0
+        with:
+          tag: ${{ steps.get_version.outputs.version_tag }}
+
+      - name: Install dependencies
+        if: steps.check_tag.outputs.exists == 'false'
+        run: python -m pip install -r requirements.txt
+
+      - name: Build application package
+        if: steps.check_tag.outputs.exists == 'false'
+        run: python build_exe.py --package
+
+      - name: Create GitHub Release
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2.0.6
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
+          body: "Automated release for version ${{ env.VERSION }}"
+          files: release/OwlcatPortraitTool.zip
+
+      - name: Log skip message
+        if: steps.check_tag.outputs.exists == 'true'
+        run: echo "Tag ${{ env.VERSION }} already exists. Skipping release."

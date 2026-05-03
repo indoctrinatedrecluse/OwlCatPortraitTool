@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -17,8 +18,10 @@ RELEASE_DIR = PROJECT_ROOT / "release"
 SPEC_FILE = PROJECT_ROOT / f"{APP_NAME}.spec"
 CONFIG_FILE = PROJECT_ROOT / LocalConfigService.CONFIG_FILE_NAME
 ASSETS_DIR = PROJECT_ROOT / "assets"
-ICON_FILE = ASSETS_DIR / "OwlcatPortraitTool.ico"
+ICON_FILE = ASSETS_DIR / "app_icon.ico"
 VERSION_FILE = PROJECT_ROOT / "version_info.txt"
+SHA_VERIFIER_EXE = "sha256sum.exe"
+SHA_CHECKSUMS_FILE = "SHA256SUMS.txt"
 RELEASE_PACKAGE = RELEASE_DIR / f"{APP_NAME}.zip"
 
 
@@ -29,6 +32,45 @@ def initialize_local_config():
         GlobalsService.get_builtin_appdata_locallow_folder,
         path=CONFIG_FILE,
     )
+
+
+def _ensure_sha_verifier_exists():
+    """Create a dummy SHA verifier if it doesn't exist, for build testing."""
+    verifier_path = ASSETS_DIR / SHA_VERIFIER_EXE
+    if not verifier_path.exists():
+        print(f"Warning: SHA verifier '{verifier_path}' not found. Creating dummy file.")
+        print("Please download a real sha256sum.exe and place it there.")
+        ASSETS_DIR.mkdir(exist_ok=True)
+        verifier_path.write_text("This is a placeholder for a real sha256sum.exe")
+
+
+def copy_verifier_to_release(release_content_path):
+    """Copy the SHA verifier from assets to the release folder."""
+    source_path = ASSETS_DIR / SHA_VERIFIER_EXE
+    if not source_path.exists():
+        print(f"Warning: SHA verifier not found at {source_path}. Skipping copy.")
+        return
+
+    dest_path = release_content_path / SHA_VERIFIER_EXE
+    shutil.copy(source_path, dest_path)
+    print(f"Copied SHA verifier to {dest_path}")
+
+
+def calculate_and_write_sha(release_content_path):
+    """Calculate SHA256 for all files in the release and write to a checksum file."""
+    checksums = []
+    checksum_file_path = release_content_path / SHA_CHECKSUMS_FILE
+    files_to_hash = sorted(
+        [p for p in release_content_path.rglob("*") if p.is_file() and p.name != SHA_CHECKSUMS_FILE]
+    )
+
+    for file_path in files_to_hash:
+        sha256_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        relative_path = file_path.relative_to(release_content_path)
+        checksums.append(f"{sha256_hash} *{relative_path.as_posix()}")
+
+    checksum_file_path.write_text("\n".join(checksums) + "\n", encoding="utf-8")
+    print(f"Generated SHA256 checksums at {checksum_file_path}")
 
 
 def build_pyinstaller_command(onefile=False):
@@ -89,18 +131,20 @@ def package_release(onefile=False):
         RELEASE_PACKAGE.unlink()
 
     if onefile:
-        package_root = executable_path.parent
-        base_name = executable_path.stem
+        package_root = RELEASE_DIR
+        base_name = APP_NAME
+        base_dir_to_archive = "."
     else:
-        package_root = executable_path.parent.parent
-        base_name = executable_path.parent.name
+        package_root = RELEASE_DIR
+        base_name = APP_NAME
+        base_dir_to_archive = APP_NAME
 
     archive_base = RELEASE_DIR / base_name
     created_archive = shutil.make_archive(
         str(archive_base),
         "zip",
         root_dir=package_root,
-        base_dir=base_name if not onefile else executable_path.name,
+        base_dir=base_dir_to_archive,
     )
     return Path(created_archive)
 
@@ -118,6 +162,7 @@ def run_build(onefile=False, clean=True, dry_run=False, package=False, smoke_tes
         raise FileNotFoundError(f"Application entrypoint not found: {ENTRYPOINT}")
 
     initialize_local_config()
+    _ensure_sha_verifier_exists()
 
     if clean:
         remove_build_outputs()
@@ -138,6 +183,14 @@ def run_build(onefile=False, clean=True, dry_run=False, package=False, smoke_tes
         return error.returncode
 
     output_path = get_built_executable_path(onefile=onefile)
+
+    if onefile:
+        release_content_path = RELEASE_DIR
+    else:
+        release_content_path = RELEASE_DIR / APP_NAME
+
+    copy_verifier_to_release(release_content_path)
+    calculate_and_write_sha(release_content_path)
 
     if smoke_test:
         smoke_test_executable(onefile=onefile)

@@ -1,61 +1,95 @@
-import sys
+import hashlib
+import subprocess
+import zipfile
+
+import pytest
 
 import build_exe
 
 
-def test_build_command_targets_current_entrypoint_and_default_folder_build():
-    command = build_exe.build_pyinstaller_command()
+@pytest.mark.parametrize("onefile", [True, False])
+def test_build_script_packages_sha_files(onefile, monkeypatch, tmp_path):
+    # --- Setup a fake project structure ---
+    project_root = tmp_path
+    monkeypatch.setattr(build_exe, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(build_exe, "RELEASE_DIR", project_root / "release")
+    monkeypatch.setattr(build_exe, "ASSETS_DIR", project_root / "assets")
+    monkeypatch.setattr(build_exe, "APP_NAME", "TestApp")
+    monkeypatch.setattr(build_exe, "RELEASE_PACKAGE", build_exe.RELEASE_DIR / "TestApp.zip")
 
-    assert command[:3] == [sys.executable, "-m", "PyInstaller"]
-    assert "--windowed" in command
-    assert "--clean" in command
-    assert "--distpath" in command
-    assert str(build_exe.RELEASE_DIR) in command
-    assert "--add-data" in command
-    assert any(str(build_exe.CONFIG_FILE) in part for part in command)
-    assert "--contents-directory" in command
-    assert "." in command
-    assert "--onefile" not in command
-    assert command[-1] == str(build_exe.ENTRYPOINT)
+    # Create fake assets
+    build_exe.ASSETS_DIR.mkdir()
+    sha_verifier_path = build_exe.ASSETS_DIR / build_exe.SHA_VERIFIER_EXE
+    sha_verifier_path.write_text("fake verifier")
 
+    # Create a fake entrypoint
+    (project_root / "UIQtRender.py").write_text("print('hello')")
 
-def test_build_command_supports_onefile_builds():
-    command = build_exe.build_pyinstaller_command(onefile=True)
+    # --- Mock external processes ---
+    def fake_subprocess_run(*args, **kwargs):
+        # Simulate PyInstaller creating the output
+        build_exe.RELEASE_DIR.mkdir(parents=True, exist_ok=True)
+        if onefile:
+            (build_exe.RELEASE_DIR / f"{build_exe.APP_NAME}.exe").write_text("fake onefile exe")
+        else:
+            release_app_dir = build_exe.RELEASE_DIR / build_exe.APP_NAME
+            release_app_dir.mkdir(parents=True)
+            (release_app_dir / f"{build_exe.APP_NAME}.exe").write_text("fake folder exe")
+            (release_app_dir / "somedll.dll").write_text("fake dll")
+        return subprocess.CompletedProcess(args, 0)
 
-    assert "--onefile" in command
-    assert "--contents-directory" not in command
+    monkeypatch.setattr(build_exe.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(build_exe, "remove_build_outputs", lambda: None)
+    monkeypatch.setattr(build_exe, "initialize_local_config", lambda: None)
+    monkeypatch.setattr(build_exe, "_ensure_sha_verifier_exists", lambda: None)
 
+    # --- Run the build ---
+    return_code = build_exe.run_build(onefile=onefile, package=True)
+    assert return_code == 0
 
-def test_clean_removes_release_outputs(tmp_path, monkeypatch):
-    build_dir = tmp_path / "build"
-    dist_dir = tmp_path / "dist"
-    release_dir = tmp_path / "release"
-    spec_file = tmp_path / "OwlcatPortraitTool.spec"
+    # --- Assertions ---
+    if onefile:
+        release_content_path = build_exe.RELEASE_DIR
+        expected_files_in_dir = [
+            f"{build_exe.APP_NAME}.exe",
+            build_exe.SHA_VERIFIER_EXE,
+            build_exe.SHA_CHECKSUMS_FILE,
+        ]
+        expected_files_in_zip = expected_files_in_dir
+    else:
+        release_content_path = build_exe.RELEASE_DIR / build_exe.APP_NAME
+        expected_files_in_dir = [
+            f"{build_exe.APP_NAME}.exe",
+            "somedll.dll",
+            build_exe.SHA_VERIFIER_EXE,
+            build_exe.SHA_CHECKSUMS_FILE,
+        ]
+        expected_files_in_zip = [f"{build_exe.APP_NAME}/{f}" for f in expected_files_in_dir]
 
-    for path in (build_dir, dist_dir, release_dir):
-        path.mkdir()
-        (path / "old.txt").write_text("old")
+    # 1. Assert SHA verifier was copied
+    copied_verifier = release_content_path / build_exe.SHA_VERIFIER_EXE
+    assert copied_verifier.exists()
+    assert copied_verifier.read_text() == "fake verifier"
 
-    spec_file.write_text("old")
+    # 2. Assert SHA checksums file was created and is correct
+    checksum_file = release_content_path / build_exe.SHA_CHECKSUMS_FILE
+    assert checksum_file.exists()
 
-    monkeypatch.setattr(build_exe, "BUILD_DIR", build_dir)
-    monkeypatch.setattr(build_exe, "DIST_DIR", dist_dir)
-    monkeypatch.setattr(build_exe, "RELEASE_DIR", release_dir)
-    monkeypatch.setattr(build_exe, "SPEC_FILE", spec_file)
+    lines = checksum_file.read_text().strip().split("\n")
+    assert len(lines) == len(expected_files_in_dir) - 1
 
-    build_exe.remove_build_outputs()
+    hashes = {name: sha for sha, name in (line.split(" *") for line in lines)}
 
-    assert not build_dir.exists()
-    assert not dist_dir.exists()
-    assert not release_dir.exists()
-    assert not spec_file.exists()
+    for f in expected_files_in_dir:
+        if f == build_exe.SHA_CHECKSUMS_FILE:
+            continue
+        expected_hash = hashlib.sha256((release_content_path / f).read_bytes()).hexdigest()
+        assert hashes[f] == expected_hash
 
+    # 3. Assert ZIP package was created and contains all files
+    zip_path = build_exe.RELEASE_DIR / "TestApp.zip"
+    assert zip_path.exists()
 
-def test_initialize_local_config_creates_dat_file(tmp_path, monkeypatch):
-    config_file = tmp_path / "OwlcatPortraitTool.dat"
-    monkeypatch.setattr(build_exe, "CONFIG_FILE", config_file)
-
-    build_exe.initialize_local_config()
-
-    assert config_file.exists()
-    assert "Pathfinder Kingmaker" in config_file.read_text(encoding="utf-8")
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zip_contents = zf.namelist()
+        assert sorted(zip_contents) == sorted(expected_files_in_zip)

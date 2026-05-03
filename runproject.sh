@@ -23,18 +23,18 @@ if [ ! -x "$VENV_PYTHON" ]; then
     exit 1
 fi
 
-if [ ! -x "$APP_EXE" ]; then
-    "$VENV_PYTHON" -u "$BUILD_SCRIPT"
-    BUILD_STATUS=$?
-    if [ "$BUILD_STATUS" -ne 0 ]; then
-        exit "$BUILD_STATUS"
-    fi
+# Always run the build to ensure the latest changes are included. The build
+# script handles cleaning up old artifacts.
+"$VENV_PYTHON" -u "$BUILD_SCRIPT"
+BUILD_STATUS=$?
+if [ "$BUILD_STATUS" -ne 0 ]; then
+    exit "$BUILD_STATUS"
+fi
 
-    if [ ! -x "$APP_EXE" ]; then
-        echo "Build completed, but the executable was not found at:"
-        echo "  $APP_EXE"
-        exit 1
-    fi
+if [ ! -x "$APP_EXE" ]; then
+    echo "Build completed, but the executable was not found at:"
+    echo "  $APP_EXE"
+    exit 1
 fi
 
 exec "$APP_EXE" "$@"

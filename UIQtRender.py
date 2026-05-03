@@ -1,5 +1,6 @@
 from io import BytesIO
 import random
+import functools
 import string
 import sys
 from pathlib import Path
@@ -11,18 +12,28 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from GlobalsService import (
     get_full_length_portrait_size,
     get_next_game_name,
+    get_recent_files,
     get_required_portrait_dimensions,
     get_recent_export_folder,
+    get_selected_booru,
     get_selected_tab,
     get_window_settings,
+    add_recent_file,
+    clear_recent_files,
     set_appdata_locallow_folder,
+    remove_recent_file,
     set_game_name,
     set_recent_export_folder,
     set_selected_tab,
+    set_selected_booru,
     set_window_settings,
     settings,
 )
-from SearchService import search_portraits_by_tags
+from SearchService import (
+    MAX_SEARCH_RESULTS_PER_PAGE,
+    get_booru_sites,
+    search_portraits_by_tags,
+)
 from RequestHeaders import IMAGE_REQUEST_HEADERS
 from URLService import get_image_from_url, is_valid_url
 
@@ -34,7 +45,9 @@ MAX_THUMBNAIL_WIDTH = 220
 RESULT_CELL_PADDING = 24
 RESULT_CELL_SPACING = 12
 MAX_CONCURRENT_PREVIEW_LOADS = 6
+MAX_SEARCH_PAGES = 20
 MAX_PREVIEW_LOAD_ATTEMPTS = 5
+MAX_RECENT_FILES = 10
 PREVIEW_REQUEST_TIMEOUT_SECONDS = 8
 RESULT_IMAGE_URL_ROLE = QtCore.Qt.UserRole
 RESULT_PREVIEW_FAILURE_ROLE = QtCore.Qt.UserRole + 1
@@ -50,8 +63,51 @@ UNSAVED_EDITOR_CONFIRMATION_TITLE = "Leave Portrait Editor?"
 UNSAVED_EDITOR_CONFIRMATION_MESSAGE = (
     "You have unsaved portrait changes. Leave the Portrait Editor without exporting?"
 )
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.5.0"
 
+
+class AboutDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About Owlcat Portrait Tool")
+
+        layout = QtWidgets.QVBoxLayout()
+        self.setLayout(layout)
+
+        title_label = QtWidgets.QLabel(f"Owlcat Portrait Tool v{APP_VERSION}")
+        title_font = title_label.font()
+        title_font.setBold(True)
+        title_font.setPointSize(title_font.pointSize() + 2)
+        title_label.setFont(title_font)
+        layout.addWidget(title_label)
+
+        author_label = QtWidgets.QLabel("Author: indoctrinatedrecluse")
+        layout.addWidget(author_label)
+
+        github_link = "https://github.com/indoctrinatedrecluse/OwlcatPortraitTool"
+        github_label = QtWidgets.QLabel(f'<a href="{github_link}">{github_link}</a>')
+        github_label.setOpenExternalLinks(True)
+        layout.addWidget(github_label)
+
+        layout.addWidget(QtWidgets.QFrame(self, frameShape=QtWidgets.QFrame.HLine))
+
+        instructions_text = """
+        <h4>How to Use</h4>
+        <p>This tool helps you create custom portraits for Owlcat Games.</p>
+        <ul>
+            <li><b>Search Tab:</b> Find images by URL or by searching tags on various image boards. Click a result to open it in the editor.</li>
+            <li><b>Portrait Editor Tab:</b> Drag and zoom your selected image to position it within the crop frame. When you're ready, use the export buttons to save the portraits.</li>
+            <li><b>Settings Tab:</b> Switch between supported games to use the correct portrait dimensions and save paths for each.</li>
+        </ul>
+        """
+        instructions_label = QtWidgets.QLabel(instructions_text)
+        instructions_label.setWordWrap(True)
+        instructions_label.setTextFormat(QtCore.Qt.RichText)
+        layout.addWidget(instructions_label)
+
+        close_button = QtWidgets.QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        layout.addWidget(close_button, alignment=QtCore.Qt.AlignRight)
 
 class PreviewLoaderSignals(QtCore.QObject):
     loaded = QtCore.pyqtSignal(int, int, QtGui.QImage)
@@ -117,12 +173,19 @@ class MainWindow(QtWidgets.QMainWindow):
             window_settings["height"],
         )
 
+        self.setAcceptDrops(True)
+        self.setup_drop_overlay()
+
+        self.setup_menu_bar()
+
         self.tab_widget = QtWidgets.QTabWidget()
         self.setCentralWidget(self.tab_widget)
 
         self.setup_portrait_editor_tab()
         self.setup_search_tab()
         self.setup_settings_tab()
+        self.original_tab_color = self.tab_widget.tabBar().tabTextColor(0)
+        self.update_recent_files_menu()
         self.previous_tab_index = self.tab_widget.currentIndex()
         self.reverting_tab_change = False
         self.tab_widget.currentChanged.connect(self.handle_tab_changed)
@@ -131,7 +194,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.previous_tab_index = selected_tab
 
     def setup_portrait_editor_tab(self):
-        self.portrait_editor_tab = PortraitEditorTab()
+        self.portrait_editor_tab = PortraitEditorTab(self)
         self.tab_widget.addTab(self.portrait_editor_tab, "Portrait Editor")
 
     def setup_search_tab(self):
@@ -150,8 +213,142 @@ class MainWindow(QtWidgets.QMainWindow):
         self.show_portrait_editor_tab()
 
     def open_portrait_editor_with_file(self, image_path):
+        add_recent_file(image_path)
+        self.update_recent_files_menu()
         self.portrait_editor_tab.set_source_file(image_path)
         self.show_portrait_editor_tab()
+
+    def show_about_dialog(self):
+        dialog = AboutDialog(self)
+        dialog.exec_()
+
+    def check_for_updates(self):
+        releases_url = "https://github.com/indoctrinatedrecluse/OwlcatPortraitTool/releases"
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl(releases_url))
+
+    def open_recent_file(self, file_path):
+        path = Path(file_path)
+        if not path.exists():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "File Not Found",
+                f"The file could not be found and will be removed from the recent files list:\n{file_path}",
+            )
+            remove_recent_file(file_path)
+            self.update_recent_files_menu()
+            return
+
+        try:
+            load_image_from_file(file_path)
+        except ValueError as error:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid Image File",
+                f"The file is not a valid image and will be removed from the recent files list:\n{file_path}\n\nReason: {error}",
+            )
+            remove_recent_file(file_path)
+            self.update_recent_files_menu()
+            return
+
+        self.open_portrait_editor_with_file(file_path)
+
+    def update_recent_files_menu(self):
+        self.recent_files_menu.clear()
+        recent_files = get_recent_files()
+
+        self.clear_recent_files_action.setEnabled(bool(recent_files))
+
+        if not recent_files:
+            action = self.recent_files_menu.addAction("No recent files")
+            action.setEnabled(False)
+            return
+
+        for file_path in recent_files:
+            action = QtWidgets.QAction(file_path, self)
+            action.triggered.connect(
+                functools.partial(self.open_recent_file, file_path)
+            )
+            self.recent_files_menu.addAction(action)
+
+    def clear_recent_files(self):
+        if self.ask_yes_no(
+            "Clear Recent Files?",
+            "Are you sure you want to clear the recent files list?",
+        ):
+            clear_recent_files()
+            self.update_recent_files_menu()
+
+    def update_portrait_editor_tab_title(self):
+        is_dirty = self.portrait_editor_tab.has_unsaved_changes
+        base_title = "Portrait Editor"
+        tab_bar = self.tab_widget.tabBar()
+
+        if is_dirty:
+            tab_bar.setTabText(PORTRAIT_EDITOR_TAB_INDEX, f"{base_title} *")
+            tab_bar.setTabTextColor(PORTRAIT_EDITOR_TAB_INDEX, QtGui.QColor("orange"))
+        else:
+            tab_bar.setTabText(PORTRAIT_EDITOR_TAB_INDEX, base_title)
+            tab_bar.setTabTextColor(PORTRAIT_EDITOR_TAB_INDEX, self.original_tab_color)
+
+    def setup_drop_overlay(self):
+        self.drop_overlay = QtWidgets.QLabel("Drop image here", self)
+        self.drop_overlay.setAlignment(QtCore.Qt.AlignCenter)
+        self.drop_overlay.setStyleSheet(
+            """
+            QLabel {
+                background-color: rgba(0, 0, 0, 180);
+                color: white;
+                font-size: 24px;
+                font-weight: bold;
+                border: 2px dashed white;
+            }
+            """
+        )
+        self.drop_overlay.hide()
+
+    def setup_menu_bar(self):
+        menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("&File")
+
+        open_action = QtWidgets.QAction("&Open Image...", self)
+        open_action.setShortcut(QtGui.QKeySequence.Open)
+        open_action.triggered.connect(self.open_local_image_dialog)
+        file_menu.addAction(open_action)
+
+        self.recent_files_menu = file_menu.addMenu("Recent Files")
+
+        self.clear_recent_files_action = file_menu.addAction("Clear Recent Files")
+        self.clear_recent_files_action.setEnabled(False)
+        self.clear_recent_files_action.triggered.connect(self.clear_recent_files)
+
+        file_menu.addSeparator()
+
+        exit_action = QtWidgets.QAction("E&xit", self)
+        exit_action.setShortcut("Ctrl+Q")
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        help_menu = menu_bar.addMenu("&Help")
+
+        check_for_updates_action = QtWidgets.QAction("Check for &Updates...", self)
+        check_for_updates_action.triggered.connect(self.check_for_updates)
+        help_menu.addAction(check_for_updates_action)
+
+        help_menu.addSeparator()
+
+        about_action = QtWidgets.QAction("&About", self)
+        about_action.triggered.connect(self.show_about_dialog)
+        help_menu.addAction(about_action)
+
+    def open_local_image_dialog(self):
+        selected_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select Portrait Image",
+            str(Path.home()),
+            "Images (*.png *.jpg *.jpeg *.webp)",
+        )
+        if selected_file:
+            self.open_portrait_editor_with_file(selected_file)
 
     def handle_tab_changed(self, tab_index):
         if self.reverting_tab_change:
@@ -227,13 +424,14 @@ class MainWindow(QtWidgets.QMainWindow):
 class PortraitEditorTab(QtWidgets.QWidget):
     """Screen 1: portrait loading and editing."""
 
-    def __init__(self):
+    def __init__(self, main_window):
         super().__init__()
         self.setAcceptDrops(True)
 
         layout = QtWidgets.QVBoxLayout()
         self.setLayout(layout)
 
+        self.main_window = main_window
         self.source_url = None
         self.source_file = None
         self.source_image = None
@@ -253,7 +451,7 @@ class PortraitEditorTab(QtWidgets.QWidget):
         layout.addLayout(load_button_layout)
 
         self.load_file_button = QtWidgets.QPushButton("Load Local Image...")
-        self.load_file_button.clicked.connect(self.choose_source_file)
+        self.load_file_button.clicked.connect(self.main_window.open_local_image_dialog)
         load_button_layout.addWidget(self.load_file_button)
 
         self.crop_canvas = PortraitCropCanvas()
@@ -317,6 +515,19 @@ class PortraitEditorTab(QtWidgets.QWidget):
         self.open_game_folder_button.setEnabled(self.last_game_export_folder.exists())
         button_layout.addWidget(self.open_game_folder_button)
 
+        export_path_layout = QtWidgets.QHBoxLayout()
+        layout.addLayout(export_path_layout)
+
+        self.export_path_field = QtWidgets.QLineEdit()
+        self.export_path_field.setReadOnly(True)
+        self.export_path_field.setPlaceholderText("Last export path will be shown here")
+        export_path_layout.addWidget(self.export_path_field, stretch=1)
+
+        self.copy_path_button = QtWidgets.QPushButton("Copy")
+        self.copy_path_button.clicked.connect(self.copy_export_path)
+        self.copy_path_button.setEnabled(False)
+        export_path_layout.addWidget(self.copy_path_button)
+
         self.status_label = QtWidgets.QLabel()
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
@@ -327,16 +538,6 @@ class PortraitEditorTab(QtWidgets.QWidget):
     def set_source_file(self, image_path):
         self.load_source(SOURCE_LOAD_LOCAL, str(image_path))
 
-    def choose_source_file(self):
-        selected_file, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "Select Portrait Image",
-            str(Path.home()),
-            "Images (*.png *.jpg *.jpeg *.webp)",
-        )
-        if selected_file:
-            self.set_source_file(selected_file)
-
     def load_source(self, source_kind, source):
         self.has_unsaved_changes = False
         self.source_url = source if source_kind == SOURCE_LOAD_URL else None
@@ -346,6 +547,8 @@ class PortraitEditorTab(QtWidgets.QWidget):
 
         source_label = "URL" if source_kind == SOURCE_LOAD_URL else "File"
         self.source_label.setText(f"Selected portrait {source_label.lower()}:\n{source}")
+        self.export_path_field.clear()
+        self.copy_path_button.setEnabled(False)
         self.status_label.setText("Loading image...")
         self.set_editor_actions_enabled(False)
         self.clear_export_previews()
@@ -385,9 +588,17 @@ class PortraitEditorTab(QtWidgets.QWidget):
         self.zoom_in_button.setEnabled(enabled)
         self.zoom_out_button.setEnabled(enabled)
 
+    def set_dirty_state(self, is_dirty):
+        """Set the unsaved changes state and update the UI indicator."""
+        if self.has_unsaved_changes == is_dirty:
+            return
+
+        self.has_unsaved_changes = is_dirty
+        self.main_window.update_portrait_editor_tab_title()
+
     def mark_unsaved_changes(self):
         if self.source_image is not None:
-            self.has_unsaved_changes = True
+            self.set_dirty_state(True)
 
     def export_local(self):
         output_folder = self.export_portrait_set(LOCAL_OUTPUT_FOLDER)
@@ -397,10 +608,8 @@ class PortraitEditorTab(QtWidgets.QWidget):
             self.open_local_folder_button.setEnabled(True)
 
     def export_to_game(self):
-        main_window = self.window()
-        if hasattr(main_window, "ensure_current_game_path_exists"):
-            if not main_window.ensure_current_game_path_exists():
-                return
+        if not self.main_window.ensure_current_game_path_exists():
+            return
 
         output_folder = self.export_portrait_set(settings.output_folder)
         if output_folder:
@@ -427,9 +636,34 @@ class PortraitEditorTab(QtWidgets.QWidget):
             )
             output_image.save(output_folder / portrait_size.name)
 
-        self.has_unsaved_changes = False
-        self.status_label.setText(f"Exported portrait set to:\n{output_folder}")
+        self.set_dirty_state(False)
+        self.export_path_field.setText(str(output_folder))
+        self.copy_path_button.setEnabled(True)
+        self.status_label.setText("Export successful.")
         return output_folder
+
+    def copy_export_path(self):
+        path_to_copy = self.export_path_field.text()
+        if not path_to_copy:
+            return
+
+        QtWidgets.QApplication.clipboard().setText(path_to_copy)
+        self.status_label.setText("Copied path to clipboard.")
+
+    def load_pil_image(self, image, source_description):
+        self.set_dirty_state(False)
+        self.source_url = None
+        self.source_file = None
+        self.source_generation += 1
+        self.source_thread_pool.clear()
+
+        self.source_label.setText(f"Selected portrait source:\n{source_description}")
+        self.export_path_field.clear()
+        self.copy_path_button.setEnabled(False)
+
+        self.source_loaded(
+            self.source_generation, source_description, image.copy()
+        )
 
     def update_export_previews(self):
         if self.source_image is None:
@@ -509,30 +743,24 @@ class PortraitEditorTab(QtWidgets.QWidget):
         self.source_thread_pool.waitForDone(100)
         super().closeEvent(event)
 
-    def dragEnterEvent(self, event):
-        if self.get_local_image_path_from_drop(event.mimeData()):
-            event.acceptProposedAction()
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_P and event.modifiers() == QtCore.Qt.ControlModifier:
+            clipboard = QtWidgets.QApplication.clipboard()
+            mime_data = clipboard.mimeData()
+            if mime_data.hasImage():
+                q_image = clipboard.image()
+                if not q_image.isNull():
+                    buffer = QtCore.QBuffer()
+                    buffer.open(QtCore.QBuffer.ReadWrite)
+                    q_image.save(buffer, "PNG")
+                    pil_image = Image.open(BytesIO(buffer.data()))
+                    buffer.close()
 
-    def dropEvent(self, event):
-        image_path = self.get_local_image_path_from_drop(event.mimeData())
-        if image_path:
-            self.set_source_file(image_path)
-            event.acceptProposedAction()
+                    self.load_pil_image(pil_image, "Pasted from clipboard")
+                    event.accept()
+                    return
 
-    def get_local_image_path_from_drop(self, mime_data):
-        if not mime_data.hasUrls():
-            return None
-
-        for url in mime_data.urls():
-            if not url.isLocalFile():
-                continue
-
-            image_path = Path(url.toLocalFile())
-            if image_path.suffix.lower() in LOCAL_IMAGE_EXTENSIONS:
-                return str(image_path)
-
-        return None
-
+        super().keyPressEvent(event)
 
 class PortraitCropCanvas(QtWidgets.QWidget):
     """Draggable image preview with a fixed Pathfinder full-length crop frame."""
@@ -864,17 +1092,53 @@ class SearchTab(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout()
         self.setLayout(layout)
 
-        self.input_switch = QtWidgets.QCheckBox("URL Input")
+        self.form_layout = QtWidgets.QFormLayout()
+        layout.addLayout(self.form_layout)
+
+        self.input_switch = QtWidgets.QCheckBox("Search by URL")
         self.input_switch.setChecked(True)
-        layout.addWidget(self.input_switch)
+        self.input_switch.toggled.connect(self.update_input_mode)
+        self.form_layout.addRow(self.input_switch)
+
+        self.booru_sites = get_booru_sites()
+        self.booru_selector = QtWidgets.QComboBox()
+        self.booru_selector.addItems(self.booru_sites.keys())
+        last_selected_booru = get_selected_booru()
+        if last_selected_booru in self.booru_sites:
+            self.booru_selector.setCurrentText(last_selected_booru)
+        self.booru_selector.currentTextChanged.connect(set_selected_booru)
+        self.form_layout.addRow("Booru Site", self.booru_selector)
 
         self.search_bar = QtWidgets.QLineEdit()
         self.search_bar.setPlaceholderText("Enter URL or tags...")
-        layout.addWidget(self.search_bar)
+        self.form_layout.addRow("Search", self.search_bar)
+
+        search_actions_layout = QtWidgets.QHBoxLayout()
+        layout.addLayout(search_actions_layout)
 
         self.search_button = QtWidgets.QPushButton("Search")
         self.search_button.clicked.connect(self.process_search)
-        layout.addWidget(self.search_button)
+        search_actions_layout.addWidget(self.search_button)
+
+        self.clear_button = QtWidgets.QPushButton("Clear")
+        self.clear_button.clicked.connect(self.clear_search)
+        search_actions_layout.addWidget(self.clear_button)
+
+        self.pagination_widget = QtWidgets.QWidget()
+        pagination_layout = QtWidgets.QHBoxLayout(self.pagination_widget)
+        pagination_layout.setContentsMargins(0, 5, 0, 0)
+        self.prev_button = QtWidgets.QPushButton("<< Previous")
+        self.prev_button.clicked.connect(self.go_to_prev_page)
+        self.page_label = QtWidgets.QLabel(f"Page 1 / {MAX_SEARCH_PAGES}")
+        self.page_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.next_button = QtWidgets.QPushButton("Next >>")
+        self.next_button.clicked.connect(self.go_to_next_page)
+        pagination_layout.addWidget(self.prev_button)
+        pagination_layout.addStretch()
+        pagination_layout.addWidget(self.page_label)
+        pagination_layout.addStretch()
+        pagination_layout.addWidget(self.next_button)
+        layout.addWidget(self.pagination_widget)
 
         self.results_list = QtWidgets.QListWidget()
         self.results_list.setViewMode(QtWidgets.QListView.IconMode)
@@ -890,6 +1154,32 @@ class SearchTab(QtWidgets.QWidget):
         self.preview_thread_pool = QtCore.QThreadPool(self)
         self.preview_thread_pool.setMaxThreadCount(MAX_CONCURRENT_PREVIEW_LOADS)
         self.preview_generation = 0
+        self.current_page = 1
+        self.current_tags = []
+        self.last_result_count = 0
+        self.pagination_widget.hide()
+        self.update_input_mode(self.input_switch.isChecked())
+
+    def go_to_prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.execute_tag_search()
+
+    def go_to_next_page(self):
+        if self.current_page < MAX_SEARCH_PAGES:
+            self.current_page += 1
+            self.execute_tag_search()
+
+    def update_input_mode(self, is_url_mode):
+        self.booru_selector.setVisible(not is_url_mode)
+        booru_label = self.form_layout.labelForField(self.booru_selector)
+        if booru_label:
+            booru_label.setVisible(not is_url_mode)
+
+        if is_url_mode:
+            self.search_bar.setPlaceholderText("Enter image URL...")
+        else:
+            self.search_bar.setPlaceholderText("Enter tags, comma-separated...")
 
     def get_search_input(self):
         text = self.search_bar.text().strip()
@@ -899,28 +1189,37 @@ class SearchTab(QtWidgets.QWidget):
         return [tag.strip() for tag in text.split(",") if tag.strip()]
 
     def process_search(self):
-        self.render_search_results()
+        search_input = self.get_search_input()
+
+        if not search_input:
+            self.results_list.clear()
+            self.results_list.addItem("Enter a URL or at least one tag.")
+            self.pagination_widget.hide()
+            return
+
+        if self.input_switch.isChecked():
+            self.pagination_widget.hide()
+            self.handle_url_input(search_input)
+            return
+
+        # This is a new tag search
+        self.current_tags = search_input
+        self.current_page = 1
+        self.execute_tag_search()
+
+    def clear_search(self):
+        """Clear the search input and results list."""
+        self.search_bar.clear()
+        self.cancel_preview_loads()
+        self.image_result_widgets = []
+        self.results_list.clear()
+        self.current_page = 1
+        self.current_tags = []
+        self.pagination_widget.hide()
 
     def cancel_preview_loads(self):
         self.preview_generation += 1
         self.preview_thread_pool.clear()
-
-    def render_search_results(self):
-        """Render URL or tag-search results into the scrollable results list."""
-        self.cancel_preview_loads()
-        self.image_result_widgets = []
-        self.results_list.clear()
-        search_input = self.get_search_input()
-
-        if not search_input:
-            self.results_list.addItem("Enter a URL or at least one tag.")
-            return
-
-        if self.input_switch.isChecked():
-            self.handle_url_input(search_input)
-            return
-
-        self.render_tag_search_results(search_input)
 
     def handle_url_input(self, url):
         if not is_valid_url(url):
@@ -946,12 +1245,12 @@ class SearchTab(QtWidgets.QWidget):
             f"This preview could not be loaded.\n\n{message}",
         )
 
-    def render_tag_search_results(self, tags):
+    def render_tag_search_results(self, tags, booru_url):
         self.results_list.addItem("Searching...")
         QtWidgets.QApplication.processEvents()
 
         try:
-            results = search_portraits_by_tags(tags)
+            results = search_portraits_by_tags(tags, booru_url)
         except Exception as error:
             self.results_list.clear()
             self.results_list.addItem(f"Search failed: {error}")
@@ -1159,6 +1458,10 @@ class SettingsTab(QtWidgets.QWidget):
 
 
 if __name__ == "__main__":
+    if "--smoke-test" in sys.argv:
+        print("Smoke test: All modules imported successfully.")
+        sys.exit(0)
+
     app = QtWidgets.QApplication([])
     window = MainWindow()
     window.show()

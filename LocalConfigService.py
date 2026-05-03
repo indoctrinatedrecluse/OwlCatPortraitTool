@@ -21,6 +21,8 @@ def build_default_config(game_configs, default_game_name, default_path_provider)
     return {
         "version": CONFIG_VERSION,
         "selected_game": default_game_name,
+        "recent_files": [],
+        "selected_booru": "Safebooru",
         "selected_tab": 0,
         "window": {
             "x": 100,
@@ -91,6 +93,15 @@ def normalize_config(config, default_config):
         if config.get("selected_game") in normalized["games"]:
             normalized["selected_game"] = config["selected_game"]
 
+        saved_booru = config.get("selected_booru")
+        if isinstance(saved_booru, str):
+            normalized["selected_booru"] = saved_booru
+
+        saved_recent_files = config.get("recent_files")
+        if isinstance(saved_recent_files, list):
+            # Ensure all items are strings
+            normalized["recent_files"] = [str(p) for p in saved_recent_files if isinstance(p, str)]
+
         selected_tab = config.get("selected_tab")
         if isinstance(selected_tab, int) and selected_tab >= 0:
             normalized["selected_tab"] = selected_tab
@@ -143,6 +154,38 @@ def set_game_appdata_folder(config, game_name, folder):
 def set_selected_game(config, game_name):
     if game_name in config["games"]:
         config["selected_game"] = game_name
+
+
+def get_selected_booru(config):
+    return config.get("selected_booru", "Safebooru")
+
+
+def set_selected_booru(config, booru_name):
+    config["selected_booru"] = str(booru_name)
+
+
+def get_recent_files(config):
+    return config.get("recent_files", [])
+
+
+def add_recent_file(config, file_path, max_files):
+    file_path = str(Path(file_path))
+    recent_files = config.get("recent_files", [])
+    if file_path in recent_files:
+        recent_files.remove(file_path)
+    recent_files.insert(0, file_path)
+    config["recent_files"] = recent_files[:max_files]
+
+
+def remove_recent_file(config, file_path):
+    file_path = str(Path(file_path))
+    recent_files = config.get("recent_files", [])
+    if file_path in recent_files:
+        recent_files.remove(file_path)
+
+
+def clear_recent_files(config):
+    config["recent_files"] = []
 
 
 def get_window_settings(config):
