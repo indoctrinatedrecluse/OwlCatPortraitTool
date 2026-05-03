@@ -36,7 +36,7 @@ release/
 # Built executables and release packages
 *.exe
 *.msi
-*.zip
+OwlcatPortraitTool.zip
 *.7z
 *.tar.gz
 
