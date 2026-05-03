@@ -1,5 +1,7 @@
 import argparse
+import glob
 import hashlib
+import os
 import shutil
 import re
 import subprocess
@@ -23,6 +25,11 @@ ICON_FILE = ASSETS_DIR / "app_icon.ico"
 VERSION_FILE = PROJECT_ROOT / "version_info.txt"
 SHA_VERIFIER_EXE = "sha256sum.exe"
 SHA_CHECKSUMS_FILE = "SHA256SUMS.txt"
+CODESIGN_CERT_FILE = ASSETS_DIR / "codesign.crt"
+CODESIGN_KEY_FILE = ASSETS_DIR / "codesign.key"
+# Password can be set as an environment variable for security
+CODESIGN_KEY_PASSWORD = os.environ.get("CODESIGN_KEY_PASSWORD", "")
+TIMESTAMP_SERVER = "http://timestamp.digicert.com"
 
 
 def initialize_local_config():
@@ -91,6 +98,77 @@ def _ensure_sha_verifier_exists():
     if not verifier_path.exists():
         print(f"Warning: SHA verifier '{verifier_path}' not found.")
         print("The release package will not include the verifier executable.")
+
+
+def find_signtool():
+    """Find signtool.exe in the Windows Kits directory."""
+    if sys.platform != "win32":
+        return None
+
+    # Path for Windows 10/11 SDK
+    base_path = Path(os.environ.get("ProgramFiles(x86)"), "Windows Kits", "10", "bin")
+    if not base_path.exists():
+        return None
+
+    # Find the latest version of the SDK bin folder
+    sdk_versions = sorted([p for p in base_path.glob("*.*.*.*") if p.is_dir()], reverse=True)
+    if not sdk_versions:
+        return None
+
+    for version_path in sdk_versions:
+        signtool_path = version_path / "x64" / "signtool.exe"
+        if signtool_path.exists():
+            return str(signtool_path)
+
+    return None
+
+
+def sign_executable(executable_path):
+    """Sign the given executable with the self-signed certificate."""
+    if not CODESIGN_CERT_FILE.exists() or not CODESIGN_KEY_FILE.exists():
+        print("Info: Code signing certificate/key not found. Skipping signing.")
+        return
+
+    signtool_path = find_signtool()
+    if not signtool_path:
+        print("Warning: signtool.exe not found. Cannot sign the executable.")
+        print("         Please install the Windows SDK.")
+        return
+
+    print(f"Signing executable: {executable_path}")
+
+    # signtool requires a .pfx file. We'll create one from the .crt and .key.
+    pfx_file = ASSETS_DIR / "codesign.pfx"
+    openssl_command = [
+        "openssl", "pkcs12", "-export",
+        "-out", str(pfx_file),
+        "-inkey", str(CODESIGN_KEY_FILE),
+        "-in", str(CODESIGN_CERT_FILE),
+        "-passout", "pass:",  # Use an empty password for the PFX file
+    ]
+
+    try:
+        subprocess.run(openssl_command, check=True, capture_output=True, text=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print("Error: Failed to create PFX file using openssl.")
+        print("       Please ensure openssl is installed and in your PATH.")
+        if isinstance(e, subprocess.CalledProcessError):
+            print(f"       Stderr: {e.stderr}")
+        return
+
+    sign_command = [
+        signtool_path, "sign", "/f", str(pfx_file), "/p", "", "/tr",
+        TIMESTAMP_SERVER, "/td", "sha256", "/fd", "sha256", str(executable_path),
+    ]
+
+    try:
+        subprocess.run(sign_command, check=True, capture_output=True, text=True)
+        print("Successfully signed the executable.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error: Failed to sign the executable.\n{e.stderr}")
+    finally:
+        if pfx_file.exists():
+            pfx_file.unlink()
 
 
 def copy_verifier_to_release(release_content_path):
@@ -244,6 +322,9 @@ def run_build(onefile=False, clean=True, dry_run=False, package=False, smoke_tes
         return error.returncode
 
     output_path = get_built_executable_path(onefile=onefile)
+
+    if sys.platform == "win32":
+        sign_executable(output_path)
 
     if onefile:
         release_content_path = RELEASE_DIR

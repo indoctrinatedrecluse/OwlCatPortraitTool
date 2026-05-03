@@ -45,22 +45,38 @@ The default folder build places the required Python, PyQt, Pillow, requests,
 and Windows runtime files in the same release folder as the exe. Keep the full
 `release\OwlcatPortraitTool` folder together when moving the app.
 
+### Code Signing (Optional)
+
+The build script supports self-signing the Windows executable. While this does not grant "trusted publisher" status, it is better than an unsigned file.
+
+1. **Generate Certificate**: Run the `generate_cert.sh` script inside the `assets` folder. This requires `openssl` to be installed.
+
+    ```bash
+    cd assets
+    ./generate_cert.sh
+    ```
+
+    This creates `codesign.crt` (the certificate) and `codesign.key` (the private key).
+
+2. **IMPORTANT**: Add the private key to your `.gitignore` file. It should never be committed to version control.
+    `assets/codesign.key`
+
 ## Creating a Release (Automated)
 
 The project includes a GitHub Actions workflow to automatically build and publish releases. Helper scripts are provided to make this process simple.
 
 Your release workflow is:
 
-1. **Update Changelog**: Add a new version header (e.g., `## v0.7.0`) and release notes to the top of `CHANGELOG.md`.
+1. **Update Changelog**: Add a new version header (e.g., `## v0.8.0`) and release notes to the top of `CHANGELOG.md`.
 
-2. **Commit Changes**: Commit the updated changelog and any other code changes with your desired message.
+1. **Commit Changes**: Commit the updated changelog and any other code changes with your desired message.
 
     ```bash
     git add .
-    git commit -m "feat: Add new feature for v0.7.0"
+    git commit -m "feat: Add new feature for v0.8.0"
     ```
 
-3. **Push and Release**: Run the `push_upstream.sh` script. This will automatically tag the release based on the changelog and push it to GitHub, triggering the automated build.
+1. **Push and Release**: Run the `push_upstream.sh` script. This will automatically tag the release based on the changelog and push it to GitHub, triggering the automated build.
 
     ```bash
     ./push_upstream.sh

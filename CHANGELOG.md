@@ -2,6 +2,18 @@
 
 All notable project changes are listed by commit.
 
+## v0.8.0
+
+### feat: Add optional code signing for Windows executable
+
+- **Added**
+  - **Build**: The build script now automatically signs the Windows executable with a self-signed certificate if one is present in the `assets` folder.
+  - **Build**: Added a helper script (`assets/generate_cert.sh`) to create the necessary private key and certificate.
+- **Fixed**
+  - **CI/CD**: Granted write permissions to the GitHub Actions workflow, fixing the `HTTP 403` error that prevented release creation.
+- **Changed**
+  - **Security**: The private key for code signing (`assets/codesign.key`) is now explicitly ignored by Git.
+
 ## v0.7.0
 
 ### fix: Improve build automation and CI reliability

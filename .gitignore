@@ -53,3 +53,6 @@ htmlcov/
 *.tmp
 *.bak
 *.swp
+
+# Code signing private key
+assets/codesign.key
