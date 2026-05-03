@@ -33,12 +33,19 @@ echo "Found latest version in changelog: $LATEST_VERSION"
 
 # Check if the tag already exists
 if git rev-parse "$LATEST_VERSION" >/dev/null 2>&1; then
-    echo "Tag '$LATEST_VERSION' already exists. No new tag created."
-else
-    echo "Creating new Git tag: $LATEST_VERSION"
-    git tag "$LATEST_VERSION"
-    echo "Successfully created tag '$LATEST_VERSION'."
+    echo "Error: Tag '$LATEST_VERSION' already exists."
+    echo "A release for this version may have already been attempted."
+    echo "To re-attempt, delete the tag locally and remotely:"
+    echo "  git tag -d $LATEST_VERSION"
+    echo "  git push origin --delete $LATEST_VERSION"
+    echo "Then, run this script again."
+    echo "Alternatively, update CHANGELOG.md with a new version and commit."
+    exit 1
 fi
+
+echo "Creating new Git tag: $LATEST_VERSION"
+git tag "$LATEST_VERSION"
+echo "Successfully created tag '$LATEST_VERSION'."
 
 # --- Step 2: Push commits and tags ---
 echo ""
