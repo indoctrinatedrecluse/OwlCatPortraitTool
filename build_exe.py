@@ -97,6 +97,8 @@ def build_pyinstaller_command(onefile=False):
         str(PROJECT_ROOT),
         "--add-data",
         f"{CONFIG_FILE}{';' if sys.platform == 'win32' else ':'}.",
+        "--add-data",
+        f"{ASSETS_DIR}{';' if sys.platform == 'win32' else ':'}assets",
     ]
     if ICON_FILE.exists():
         command.extend(["--icon", str(ICON_FILE)])

@@ -63,8 +63,20 @@ UNSAVED_EDITOR_CONFIRMATION_TITLE = "Leave Portrait Editor?"
 UNSAVED_EDITOR_CONFIRMATION_MESSAGE = (
     "You have unsaved portrait changes. Leave the Portrait Editor without exporting?"
 )
-APP_VERSION = "0.5.5"
+APP_VERSION = "0.6.0"
 
+def resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller."""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = Path(__file__).resolve().parent
+
+    return Path(base_path) / relative_path
+
+
+ICON_FILE = resource_path("assets/app_icon.ico")
 
 class AboutDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -159,12 +171,37 @@ class SourceImageLoader(QtCore.QRunnable):
         self.signals.loaded.emit(self.generation, self.source, image)
 
 
+class SearchWorkerSignals(QtCore.QObject):
+    finished = QtCore.pyqtSignal(int, list)
+    failed = QtCore.pyqtSignal(int, str)
+
+
+class SearchWorker(QtCore.QRunnable):
+    def __init__(self, generation, tags, booru_name, page):
+        super().__init__()
+        self.generation = generation
+        self.tags = tags
+        self.booru_name = booru_name
+        self.page = page
+        self.signals = SearchWorkerSignals()
+
+    def run(self):
+        try:
+            results = search_portraits_by_tags(self.tags, self.booru_name, page=self.page)
+            self.signals.finished.emit(self.generation, results)
+        except Exception as error:
+            self.signals.failed.emit(self.generation, str(error))
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window with one tab per screen."""
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"Owlcat Portrait Tool {APP_VERSION}")
+        if ICON_FILE.exists():
+            self.setWindowIcon(QtGui.QIcon(str(ICON_FILE)))
+
         window_settings = get_window_settings()
         self.setGeometry(
             window_settings["x"],
@@ -1012,11 +1049,16 @@ def load_image_from_file(image_path):
         raise ValueError("Select a supported image file: PNG, JPG, JPEG, or WEBP.")
 
     try:
-        with Image.open(image_path) as image:
+        # Read file into memory once to avoid multiple disk reads.
+        image_data = image_path.read_bytes()
+        # The 'verify' call is a quick check for integrity. Pillow requires
+        # the file to be reopened after verify.
+        with Image.open(BytesIO(image_data)) as image:
             image.verify()
-        return Image.open(image_path)
-    except OSError as error:
-        raise ValueError(f"Could not open image file: {error}") from error
+        # Return a new image object from the in-memory data.
+        return Image.open(BytesIO(image_data))
+    except (OSError, ValueError) as error:
+        raise ValueError(f"Could not open or verify image file: {error}") from error
 
 
 def format_image_load_error(source, error):
@@ -1034,14 +1076,17 @@ def load_preview_image(result):
 
     for _ in range(MAX_PREVIEW_LOAD_ATTEMPTS):
         try:
-            response = requests.get(
+            # Use streaming to avoid loading the entire image into memory at once.
+            with requests.get(
                 preview_url,
                 headers=IMAGE_REQUEST_HEADERS,
                 timeout=PREVIEW_REQUEST_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                # Image.open can read directly from the raw stream.
+                image = Image.open(response.raw)
 
-            image = Image.open(BytesIO(response.content))
             image.thumbnail((MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_WIDTH * 2))
             image = image.convert("RGBA")
 
@@ -1124,6 +1169,13 @@ class SearchTab(QtWidgets.QWidget):
         self.clear_button.clicked.connect(self.clear_search)
         search_actions_layout.addWidget(self.clear_button)
 
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("Searching for portraits...")
+        self.progress_bar.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(self.progress_bar)
+
         self.pagination_widget = QtWidgets.QWidget()
         pagination_layout = QtWidgets.QHBoxLayout(self.pagination_widget)
         pagination_layout.setContentsMargins(0, 5, 0, 0)
@@ -1153,11 +1205,15 @@ class SearchTab(QtWidgets.QWidget):
         self.image_result_widgets = []
         self.preview_thread_pool = QtCore.QThreadPool(self)
         self.preview_thread_pool.setMaxThreadCount(MAX_CONCURRENT_PREVIEW_LOADS)
+        self.search_thread_pool = QtCore.QThreadPool(self)
+        self.search_thread_pool.setMaxThreadCount(1)
+        self.search_generation = 0
         self.preview_generation = 0
         self.current_page = 1
         self.current_tags = []
         self.last_result_count = 0
         self.pagination_widget.hide()
+        self.progress_bar.hide()
         self.update_input_mode(self.input_switch.isChecked())
 
     def go_to_prev_page(self):
@@ -1210,12 +1266,18 @@ class SearchTab(QtWidgets.QWidget):
     def clear_search(self):
         """Clear the search input and results list."""
         self.search_bar.clear()
+        self.cancel_search_loads()
         self.cancel_preview_loads()
         self.image_result_widgets = []
         self.results_list.clear()
+        self.progress_bar.hide()
         self.current_page = 1
         self.current_tags = []
         self.pagination_widget.hide()
+
+    def cancel_search_loads(self):
+        self.search_generation += 1
+        self.search_thread_pool.clear()
 
     def cancel_preview_loads(self):
         self.preview_generation += 1
@@ -1223,6 +1285,7 @@ class SearchTab(QtWidgets.QWidget):
 
     def handle_url_input(self, url):
         if not is_valid_url(url):
+            self.results_list.clear()
             self.results_list.addItem("Enter a valid HTTP or HTTPS image URL.")
             return
 
@@ -1246,24 +1309,28 @@ class SearchTab(QtWidgets.QWidget):
         )
 
     def execute_tag_search(self):
+        self.cancel_search_loads()
         self.cancel_preview_loads()
         self.image_result_widgets = []
         self.results_list.clear()
-        self.results_list.addItem("Searching...")
-        QtWidgets.QApplication.processEvents()
+        self.results_list.hide()
+        self.progress_bar.show()
+        self.pagination_widget.hide()
 
         booru_name = self.booru_selector.currentText()
+        worker = SearchWorker(
+            self.search_generation, self.current_tags, booru_name, self.current_page
+        )
+        worker.signals.finished.connect(self.search_finished)
+        worker.signals.failed.connect(self.search_failed)
+        self.search_thread_pool.start(worker)
 
-        try:
-            results = search_portraits_by_tags(
-                self.current_tags, booru_name, page=self.current_page
-            )
-        except Exception as error:
-            self.results_list.clear()
-            self.results_list.addItem(f"Search failed: {error}")
-            self.pagination_widget.hide()
+    def search_finished(self, generation, results):
+        if generation != self.search_generation:
             return
 
+        self.progress_bar.hide()
+        self.results_list.show()
         self.last_result_count = len(results)
         self.page_label.setText(f"Page {self.current_page} / {MAX_SEARCH_PAGES}")
         self.prev_button.setEnabled(self.current_page > 1)
@@ -1298,6 +1365,16 @@ class SearchTab(QtWidgets.QWidget):
             worker.signals.loaded.connect(self.preview_loaded)
             worker.signals.failed.connect(self.preview_failed)
             self.preview_thread_pool.start(worker)
+
+    def search_failed(self, generation, error):
+        if generation != self.search_generation:
+            return
+
+        self.progress_bar.hide()
+        self.results_list.show()
+        self.results_list.clear()
+        self.results_list.addItem(f"Search failed: {error}")
+        self.pagination_widget.hide()
 
     def preview_loaded(self, generation, result_index, image):
         if generation != self.preview_generation:

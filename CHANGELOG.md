@@ -2,6 +2,18 @@
 
 All notable project changes are listed by commit.
 
+## v0.6.0
+
+### feat: Add search progress bar and improve reliability
+
+- **Added**
+  - **Search**: Added a progress bar that appears during tag searches, replacing the static "Searching..." text. The search process now runs in the background to keep the UI responsive.
+- **Changed**
+  - **Performance**: Optimized image loading from local files and URLs to be more memory-efficient and faster, especially for search result previews.
+- **Fixed**
+  - **Search**: Improved booru search handlers to correctly process relative image URLs, increasing the number of sites that successfully return results.
+  - **UI**: The application icon now correctly appears in the window's title bar on the packaged `.exe`.
+
 ## v0.5.5
 
 ### feat: Add manual workflow trigger for testing

@@ -1,6 +1,6 @@
 from io import BytesIO
 from dataclasses import dataclass
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 from PIL import Image
 import requests
@@ -70,6 +70,13 @@ def get_booru_sites():
     return list(BOORU_SITES.keys())
 
 
+def _join_url(base_url, path):
+    """Safely join a base URL and a relative path."""
+    if not path or path.startswith(("http://", "https://")):
+        return path
+    return urljoin(base_url, path)
+
+
 def _make_api_request(url):
     """Shared function to make a JSON API request."""
     response = requests.get(
@@ -81,10 +88,11 @@ def _make_api_request(url):
     return response.json()
 
 
-def _extract_common_post_data(post):
+def _extract_common_post_data(post, config):
     """Extracts result data from a standard Danbooru/Gelbooru post object."""
-    image_url = post.get("file_url")
-    preview_url = (
+    base_url = config["url"]
+    image_url = _join_url(base_url, post.get("file_url"))
+    preview_url_path = (
         post.get("preview_file_url")
         or post.get("sample_file_url")
         or post.get("large_file_url")
@@ -93,17 +101,18 @@ def _extract_common_post_data(post):
     )
     width = post.get("image_width") or post.get("width")
     height = post.get("image_height") or post.get("height")
+    preview_url = _join_url(base_url, preview_url_path)
 
     if not image_url and isinstance(post.get("file"), dict):
-        image_url = post["file"].get("url")
+        image_url = _join_url(base_url, post["file"].get("url"))
         width = width or post["file"].get("width")
         height = height or post["file"].get("height")
 
     if not preview_url and isinstance(post.get("preview"), dict):
-        preview_url = post["preview"].get("url")
+        preview_url = _join_url(base_url, post["preview"].get("url"))
 
     if not preview_url and isinstance(post.get("sample"), dict):
-        preview_url = post["sample"].get("url")
+        preview_url = _join_url(base_url, post["sample"].get("url"))
 
     if not image_url:
         return None
@@ -123,13 +132,19 @@ def _search_gelbooru(config, tags, page, limit):
     search_url = config["url"].format(tags=tag_query, limit=limit, page=api_page)
     json_data = _make_api_request(search_url)
 
-    posts = []
+    posts_data = []
     if isinstance(json_data, dict):
-        posts = json_data.get("post", [])
+        posts_data = json_data.get("post", [])
     elif isinstance(json_data, list):
-        posts = json_data
+        posts_data = json_data
 
-    return [_extract_common_post_data(p) for p in posts if isinstance(p, dict) and _extract_common_post_data(p)]
+    results = []
+    for p in posts_data:
+        if isinstance(p, dict):
+            result = _extract_common_post_data(p, config)
+            if result:
+                results.append(result)
+    return results
 
 
 def _search_danbooru(config, tags, page, limit):
@@ -142,13 +157,19 @@ def _search_danbooru(config, tags, page, limit):
     search_url = config["url"].format(tags=tag_query, limit=limit, page=api_page)
     json_data = _make_api_request(search_url)
 
-    posts = []
+    posts_data = []
     if isinstance(json_data, dict):
-        posts = json_data.get("posts", [])
+        posts_data = json_data.get("posts", [])
     elif isinstance(json_data, list):
-        posts = json_data
+        posts_data = json_data
 
-    return [_extract_common_post_data(p) for p in posts if isinstance(p, dict) and _extract_common_post_data(p)]
+    results = []
+    for p in posts_data:
+        if isinstance(p, dict):
+            result = _extract_common_post_data(p, config)
+            if result:
+                results.append(result)
+    return results
 
 
 def _search_derpibooru(config, tags, page, limit):

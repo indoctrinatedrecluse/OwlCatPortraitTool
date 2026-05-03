@@ -37,7 +37,18 @@ def get_image_from_url(url):
     if content_type and content_type not in SUPPORTED_IMAGE_CONTENT_TYPES:
         raise ValueError(f"URL does not point to a supported image: {content_type}")
 
-    image = Image.open(BytesIO(response.content))
-    image.verify()
+    # Read content into a BytesIO stream to allow seeking.
+    image_data = response.content
+    image_stream = BytesIO(image_data)
 
-    return Image.open(BytesIO(response.content))
+    try:
+        # The 'verify' call is a quick check for integrity.
+        with Image.open(image_stream) as image:
+            image.verify()
+    except Exception as e:
+        raise ValueError("Invalid or corrupt image data.") from e
+
+    # After 'verify', Pillow requires the file to be reopened. For a
+    # BytesIO stream, seeking to the beginning is equivalent to reopening.
+    image_stream.seek(0)
+    return Image.open(image_stream)
