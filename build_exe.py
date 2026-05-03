@@ -56,7 +56,7 @@ def copy_verifier_to_release(release_content_path):
 def calculate_and_write_sha(release_content_path):
     """Calculate SHA256 for all files in the release and write to a checksum file."""
     checksums = []
-    checksum_file_path = release_content_path / SHA_CHECKSUMS_FILE
+    checksum_file_path = RELEASE_DIR / SHA_CHECKSUMS_FILE
     files_to_hash = sorted(
         [p for p in release_content_path.rglob("*") if p.is_file() and p.name != SHA_CHECKSUMS_FILE]
     )

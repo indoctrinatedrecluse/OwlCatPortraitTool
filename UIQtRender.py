@@ -1102,7 +1102,7 @@ class SearchTab(QtWidgets.QWidget):
 
         self.booru_sites = get_booru_sites()
         self.booru_selector = QtWidgets.QComboBox()
-        self.booru_selector.addItems(self.booru_sites.keys())
+        self.booru_selector.addItems(self.booru_sites)
         last_selected_booru = get_selected_booru()
         if last_selected_booru in self.booru_sites:
             self.booru_selector.setCurrentText(last_selected_booru)
@@ -1245,23 +1245,39 @@ class SearchTab(QtWidgets.QWidget):
             f"This preview could not be loaded.\n\n{message}",
         )
 
-    def render_tag_search_results(self, tags, booru_url):
+    def execute_tag_search(self):
+        self.cancel_preview_loads()
+        self.image_result_widgets = []
+        self.results_list.clear()
         self.results_list.addItem("Searching...")
         QtWidgets.QApplication.processEvents()
 
+        booru_name = self.booru_selector.currentText()
+
         try:
-            results = search_portraits_by_tags(tags, booru_url)
+            results = search_portraits_by_tags(
+                self.current_tags, booru_name, page=self.current_page
+            )
         except Exception as error:
             self.results_list.clear()
             self.results_list.addItem(f"Search failed: {error}")
+            self.pagination_widget.hide()
             return
+
+        self.last_result_count = len(results)
+        self.page_label.setText(f"Page {self.current_page} / {MAX_SEARCH_PAGES}")
+        self.prev_button.setEnabled(self.current_page > 1)
+        self.next_button.setEnabled(
+            self.current_page < MAX_SEARCH_PAGES
+            and self.last_result_count == MAX_SEARCH_RESULTS_PER_PAGE
+        )
+        self.pagination_widget.show()
 
         self.results_list.clear()
         if not results:
             self.results_list.addItem("No results found.")
             return
 
-        self.image_result_widgets = []
         self.update_results_grid_size()
 
         for result_index, result in enumerate(results):
@@ -1282,9 +1298,6 @@ class SearchTab(QtWidgets.QWidget):
             worker.signals.loaded.connect(self.preview_loaded)
             worker.signals.failed.connect(self.preview_failed)
             self.preview_thread_pool.start(worker)
-
-    def load_image_preview(self, result):
-        return QtGui.QPixmap.fromImage(load_preview_image(result))
 
     def preview_loaded(self, generation, result_index, image):
         if generation != self.preview_generation:
