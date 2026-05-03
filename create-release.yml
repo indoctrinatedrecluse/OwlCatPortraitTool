@@ -50,6 +50,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/OwlcatPortraitTool.zip
+            release/OwlcatPortraitTool-${{ github.ref_name }}-windows.zip
             release/SHA256SUMS.txt
           body: ${{ steps.get_release_notes.outputs.notes }}

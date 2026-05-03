@@ -2,6 +2,21 @@
 
 All notable project changes are listed by commit.
 
+## v0.5.2
+
+### fix: Correct startup crash and improve release assets
+
+- **Fixed**
+  - **UI**:
+    - Fixed a critical startup crash (`AttributeError: 'list' object has no attribute 'keys'`) caused by incorrect handling of booru site data in the Search tab.
+    - Fixed a subsequent bug that prevented tag searches from executing correctly.
+- **Changed**
+  - **Build & Release**:
+    - Release package is now named with the version and platform (e.g., `OwlcatPortraitTool-v0.5.2-windows.zip`) to distinguish it from auto-generated source code archives.
+- **Added**
+  - **Build & Release**:
+    - The `SHA256SUMS.txt` checksum file is now uploaded as a separate asset alongside the application zip in GitHub Releases.
+
 ## v0.5.1
 
 ### feat: Improve release automation and fix build script

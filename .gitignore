@@ -29,7 +29,7 @@ OwlcatPortraitTool.dat
 build/
 dist/
 release/*
-!release/OwlcatPortraitTool.zip
+!release/*.zip
 *.spec
 *.egg-info/
 *.manifest

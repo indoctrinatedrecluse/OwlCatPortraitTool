@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import shutil
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +23,6 @@ ICON_FILE = ASSETS_DIR / "app_icon.ico"
 VERSION_FILE = PROJECT_ROOT / "version_info.txt"
 SHA_VERIFIER_EXE = "sha256sum.exe"
 SHA_CHECKSUMS_FILE = "SHA256SUMS.txt"
-RELEASE_PACKAGE = RELEASE_DIR / f"{APP_NAME}.zip"
 
 
 def initialize_local_config():
@@ -32,6 +32,15 @@ def initialize_local_config():
         GlobalsService.get_builtin_appdata_locallow_folder,
         path=CONFIG_FILE,
     )
+
+
+def get_app_version():
+    """Reads the version string from UIQtRender.py."""
+    version_file_content = (PROJECT_ROOT / "UIQtRender.py").read_text(encoding="utf-8")
+    version_match = re.search(r"^APP_VERSION\s*=\s*['\"]([^'\"]*)['\"]", version_file_content, re.M)
+    if not version_match:
+        raise RuntimeError("Unable to find version string in UIQtRender.py.")
+    return version_match.group(1)
 
 
 def _ensure_sha_verifier_exists():
@@ -119,26 +128,27 @@ def get_built_executable_path(onefile=False):
     return RELEASE_DIR / APP_NAME / f"{APP_NAME}.exe"
 
 
-def package_release(onefile=False):
+def package_release(app_version, onefile=False):
     executable_path = get_built_executable_path(onefile=onefile)
     if not executable_path.exists():
         raise FileNotFoundError(f"Built executable not found: {executable_path}")
 
-    if RELEASE_PACKAGE.exists():
-        RELEASE_PACKAGE.unlink()
+    archive_base_name = f"{APP_NAME}-v{app_version}-windows"
+    archive_base_path = RELEASE_DIR / archive_base_name
+
+    if archive_base_path.with_suffix(".zip").exists():
+        archive_base_path.with_suffix(".zip").unlink()
 
     if onefile:
+        # This logic is simple and primarily supports the folder build used by CI.
         package_root = RELEASE_DIR
-        base_name = APP_NAME
         base_dir_to_archive = "."
     else:
         package_root = RELEASE_DIR
-        base_name = APP_NAME
         base_dir_to_archive = APP_NAME
 
-    archive_base = RELEASE_DIR / base_name
     created_archive = shutil.make_archive(
-        str(archive_base),
+        str(archive_base_path),
         "zip",
         root_dir=package_root,
         base_dir=base_dir_to_archive,
@@ -158,6 +168,7 @@ def run_build(onefile=False, clean=True, dry_run=False, package=False, smoke_tes
     if not ENTRYPOINT.exists():
         raise FileNotFoundError(f"Application entrypoint not found: {ENTRYPOINT}")
 
+    app_version = get_app_version()
     initialize_local_config()
     _ensure_sha_verifier_exists()
 
@@ -193,7 +204,7 @@ def run_build(onefile=False, clean=True, dry_run=False, package=False, smoke_tes
         smoke_test_executable(onefile=onefile)
 
     if package:
-        package_path = package_release(onefile=onefile)
+        package_path = package_release(app_version, onefile=onefile)
         print(f"Packaged release: {package_path}")
 
     print(f"Built executable: {output_path}")
