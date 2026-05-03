@@ -63,7 +63,7 @@ UNSAVED_EDITOR_CONFIRMATION_TITLE = "Leave Portrait Editor?"
 UNSAVED_EDITOR_CONFIRMATION_MESSAGE = (
     "You have unsaved portrait changes. Leave the Portrait Editor without exporting?"
 )
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 
 
 class AboutDialog(QtWidgets.QDialog):

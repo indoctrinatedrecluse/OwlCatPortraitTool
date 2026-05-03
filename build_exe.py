@@ -35,26 +35,23 @@ def initialize_local_config():
 
 
 def _ensure_sha_verifier_exists():
-    """Create a dummy SHA verifier if it doesn't exist, for build testing."""
+    """Warn if the SHA verifier doesn't exist."""
     verifier_path = ASSETS_DIR / SHA_VERIFIER_EXE
     if not verifier_path.exists():
-        print(f"Warning: SHA verifier '{verifier_path}' not found. Creating dummy file.")
-        print("Please download a real sha256sum.exe and place it there.")
-        ASSETS_DIR.mkdir(exist_ok=True)
-        verifier_path.write_text("This is a placeholder for a real sha256sum.exe")
+        print(f"Warning: SHA verifier '{verifier_path}' not found.")
+        print("The release package will not include the verifier executable.")
 
 
 def copy_verifier_to_release(release_content_path):
-    """Copy the SHA verifier from assets to the release folder."""
+    """Copy the SHA verifier from assets to the release folder if it exists."""
     source_path = ASSETS_DIR / SHA_VERIFIER_EXE
     if not source_path.exists():
-        print(f"Warning: SHA verifier not found at {source_path}. Skipping copy.")
+        print(f"Info: SHA verifier not found at {source_path}. Skipping copy.")
         return
-
+ 
     dest_path = release_content_path / SHA_VERIFIER_EXE
     shutil.copy(source_path, dest_path)
     print(f"Copied SHA verifier to {dest_path}")
-
 
 def calculate_and_write_sha(release_content_path):
     """Calculate SHA256 for all files in the release and write to a checksum file."""

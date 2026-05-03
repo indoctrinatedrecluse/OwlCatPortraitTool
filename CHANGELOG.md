@@ -2,6 +2,20 @@
 
 All notable project changes are listed by commit.
 
+## v0.5.1
+
+### feat: Improve release automation and fix build script
+
+- **Added**
+  - **Build & Release**:
+    - Added `push_upstream.sh` to fully automate the release tagging and push process. The script reads the version from the changelog, creates a Git tag, and pushes to GitHub to trigger the release workflow.
+- **Changed**
+  - **Documentation**:
+    - Updated `README.md` to reflect the new, simplified, single-script release process and fix several Markdown formatting issues.
+- **Fixed**
+  - **Build**:
+    - Fixed a `SyntaxError` in `build_exe.py` caused by a corrupted docstring, which was breaking the local build process.
+
 ## v0.5.0
 
 ### feat: Major UI/UX and backend overhaul

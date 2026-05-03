@@ -45,6 +45,29 @@ The default folder build places the required Python, PyQt, Pillow, requests,
 and Windows runtime files in the same release folder as the exe. Keep the full
 `release\OwlcatPortraitTool` folder together when moving the app.
 
+## Creating a Release (Automated)
+
+The project includes a GitHub Actions workflow to automatically build and publish releases. Helper scripts are provided to make this process simple.
+
+Your release workflow is:
+
+1. **Update Changelog**: Add a new version header (e.g., `## v0.6.0`) and release notes to the top of `CHANGELOG.md`.
+
+2. **Commit Changes**: Commit the updated changelog and any other code changes with your desired message.
+
+    ```bash
+    git add .
+    git commit -m "feat: Add new feature for v0.6.0"
+    ```
+
+3. **Push and Release**: Run the `push_upstream.sh` script. This will automatically tag the release based on the changelog and push it to GitHub, triggering the automated build.
+
+    ```bash
+    ./push_upstream.sh
+    ```
+
+A few minutes after pushing, a new release with the packaged `.zip` file and release notes will appear in the Releases section of the repository.
+
 After source changes, run `build_exe.py` again to rebuild the exe. The build
 cleans old `build`, `dist`, and `release` outputs before creating a fresh
 release folder. Use `--onefile` if you specifically want a single executable,
