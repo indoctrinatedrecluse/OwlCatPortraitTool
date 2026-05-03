@@ -2,6 +2,15 @@
 
 All notable project changes are listed by commit.
 
+## v0.5.4
+
+### fix: Correct workflow file location to enable CI
+
+- **Fixed**
+  - **Build & Release**:
+    - Moved the `create-release.yml` workflow file to the correct `.github/workflows/` directory. This resolves the issue where the automated release process was not being triggered on tag pushes.
+    - Removed a duplicate, misplaced workflow file from the project's root directory.
+
 ## v0.5.3
 
 ### fix: Ensure release assets are uploaded to GitHub
