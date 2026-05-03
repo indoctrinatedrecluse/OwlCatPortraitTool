@@ -2,6 +2,14 @@
 
 All notable project changes are listed by commit.
 
+## v0.5.3
+
+### fix: Ensure release assets are uploaded to GitHub
+
+- **Changed**
+  - **Build & Release**:
+    - Replaced the `softprops/action-gh-release` community action with the official GitHub CLI (`gh release create`) in the release workflow. This ensures that the built application `.zip` and checksum files are reliably uploaded as release assets.
+
 ## v0.5.2
 
 ### fix: Correct startup crash and improve release assets
