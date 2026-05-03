@@ -43,6 +43,48 @@ def get_app_version():
     return version_match.group(1)
 
 
+def update_version_info_file(app_version):
+    """Creates or updates version_info.txt with the current app version."""
+    version_parts = list(map(int, app_version.split(".")))
+    while len(version_parts) < 4:
+        version_parts.append(0)
+    version_tuple_str = str(tuple(version_parts[:4]))
+
+    content = f"""
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={version_tuple_str},
+    prodvers={version_tuple_str},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [
+          StringStruct('CompanyName', 'Owlcat Portrait Tool'),
+          StringStruct('FileDescription', 'Owlcat Portrait Tool'),
+          StringStruct('FileVersion', '{app_version}'),
+          StringStruct('InternalName', '{APP_NAME}'),
+          StringStruct('OriginalFilename', '{APP_NAME}.exe'),
+          StringStruct('ProductName', 'Owlcat Portrait Tool'),
+          StringStruct('ProductVersion', '{app_version}')
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+"""
+    VERSION_FILE.write_text(content.strip(), encoding="utf-8")
+    print(f"Updated {VERSION_FILE.name} with version {app_version}")
+
+
 def _ensure_sha_verifier_exists():
     """Warn if the SHA verifier doesn't exist."""
     verifier_path = ASSETS_DIR / SHA_VERIFIER_EXE
@@ -96,11 +138,14 @@ def build_pyinstaller_command(onefile=False):
         "--specpath",
         str(PROJECT_ROOT),
         "--add-data",
-        f"{CONFIG_FILE}{';' if sys.platform == 'win32' else ':'}.",
-        "--add-data",
-        f"{ASSETS_DIR}{';' if sys.platform == 'win32' else ':'}assets",
+        f"{CONFIG_FILE.name}{';' if sys.platform == 'win32' else ':'}.",
     ]
-    if ICON_FILE.exists():
+    if ASSETS_DIR.is_dir():
+        command.extend([
+            "--add-data",
+            f"{ASSETS_DIR.name}{';' if sys.platform == 'win32' else ':'}assets",
+        ])
+    if ICON_FILE.is_file():
         command.extend(["--icon", str(ICON_FILE)])
     if VERSION_FILE.exists():
         command.extend(["--version-file", str(VERSION_FILE)])
@@ -171,8 +216,14 @@ def run_build(onefile=False, clean=True, dry_run=False, package=False, smoke_tes
         raise FileNotFoundError(f"Application entrypoint not found: {ENTRYPOINT}")
 
     app_version = get_app_version()
+    update_version_info_file(app_version)
     initialize_local_config()
-    _ensure_sha_verifier_exists()
+
+    if not ASSETS_DIR.is_dir():
+        print(f"Warning: Assets directory not found at '{ASSETS_DIR}'.")
+        print("The application icon and other assets will be missing from the build.")
+    else:
+        _ensure_sha_verifier_exists()
 
     if clean:
         remove_build_outputs()

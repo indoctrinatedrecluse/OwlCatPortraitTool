@@ -2,6 +2,16 @@
 
 All notable project changes are listed by commit.
 
+## v0.7.0
+
+### fix: Improve build automation and CI reliability
+
+- **Fixed**
+  - **Build**: Corrected path resolution for assets in the build script, fixing build failures on GitHub Actions runners.
+- **Changed**
+  - **Build**: The build script now automatically generates `version_info.txt` from the main application version string. This ensures the final `.exe` file properties always reflect the correct version.
+  - **Build**: The build process is now more robust and will warn instead of crashing if the `assets` directory is missing.
+
 ## v0.6.0
 
 ### feat: Add search progress bar and improve reliability

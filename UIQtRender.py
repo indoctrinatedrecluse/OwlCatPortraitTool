@@ -63,7 +63,7 @@ UNSAVED_EDITOR_CONFIRMATION_TITLE = "Leave Portrait Editor?"
 UNSAVED_EDITOR_CONFIRMATION_MESSAGE = (
     "You have unsaved portrait changes. Leave the Portrait Editor without exporting?"
 )
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.0"
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller."""
