@@ -2,6 +2,16 @@
 
 All notable project changes are listed by commit.
 
+## v0.9.1
+
+### fix: Improve CI/CD reliability and speed
+
+- **Fixed**
+  - **CI/CD**: Fixed a build failure in the GitHub Actions release workflow caused by special characters in the release notes. The workflow now safely passes notes using a file.
+- **Changed**
+  - **CI/CD**: The GitHub Actions workflow now runs only fast, local tests by default to ensure quick release builds. The full test suite can be run on-demand via a manual trigger.
+  - **Release Script**: The local `push_upstream.sh` script now correctly distinguishes between fast local tests and slow network tests, running only the fast ones by default via `pytest` markers.
+
 ## v0.9.0
 
 ### feat: Add Starfinder support, fix Rule34 search, and add API tests
