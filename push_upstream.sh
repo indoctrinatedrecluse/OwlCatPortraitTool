@@ -6,32 +6,35 @@
 
 set -e # Exit immediately if a command exits with a non-zero status.
 
-# --- Check for --run-tests flag ---
-RUN_TESTS=false
+# --- Check for --run-all-tests flag ---
+RUN_ALL_TESTS=false
 for arg in "$@"; do
-  if [ "$arg" == "--run-tests" ]; then
-    RUN_TESTS=true
+  if [ "$arg" == "--run-all-tests" ]; then
+    RUN_ALL_TESTS=true
     break
   fi
 done
 
-# --- Run tests if requested, otherwise skip ---
-if [ "$RUN_TESTS" = true ]; then
-    echo ">>> Running tests as requested..."
-    # Prefer the virtual environment's python if it exists, otherwise use system's.
-    VENV_PYTHON="./OwlcatPortraitToolVenv/Scripts/python"
-    if [ -f "$VENV_PYTHON" ]; then
-        "$VENV_PYTHON" -m pytest
-    else
-        echo "Warning: Python virtual environment not found at '$VENV_PYTHON'."
-        echo "         Attempting to run 'pytest' from system PATH."
-        pytest
-    fi
-    echo ">>> All tests passed."
+# --- Run tests ---
+VENV_PYTHON="./OwlcatPortraitToolVenv/Scripts/python"
+PYTEST_CMD=""
+if [ -f "$VENV_PYTHON" ]; then
+    PYTEST_CMD="$VENV_PYTHON -m pytest"
 else
-    echo ">>> Skipping local tests. Use '--run-tests' to execute them before pushing."
-    echo "    (Note: Tests will still run in the CI pipeline on GitHub.)"
+    echo "Warning: Python virtual environment not found at '$VENV_PYTHON'."
+    echo "         Attempting to run 'pytest' from system PATH."
+    PYTEST_CMD="pytest"
 fi
+
+if [ "$RUN_ALL_TESTS" = true ]; then
+    echo ">>> Running all tests (including network tests)..."
+    $PYTEST_CMD
+else
+    echo ">>> Running local-only tests..."
+    $PYTEST_CMD -m "not network"
+    echo ">>> Local tests passed. Skipping network tests. Use '--run-all-tests' to include them."
+fi
+echo ">>> All executed tests passed."
 
 # Ensure we are at the project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

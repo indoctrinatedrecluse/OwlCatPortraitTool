@@ -20,6 +20,7 @@ TEST_TAGS_BY_BOORU = {
 }
 
 
+@pytest.mark.network
 @pytest.mark.parametrize("booru_name", BOORU_SITES.keys())
 def test_booru_search_api_handler(booru_name):
     """
