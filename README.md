@@ -76,10 +76,18 @@ Your release workflow is:
     git commit -m "feat: Add new feature for v1.0.0"
     ```
 
-1. **Push and Release**: Run the `push_upstream.sh` script. This script now runs the test suite before automatically tagging the release based on the changelog and pushing it to GitHub, triggering the automated build.
+1. **Push and Release**: Run the `push_upstream.sh` script. This will automatically tag the release based on the changelog and push it to GitHub, triggering the automated build.
 
     ```bash
     ./push_upstream.sh
+    ```
+
+    By default, this script skips the slow, network-dependent tests to make local pushes faster. The full test suite will still run automatically in the GitHub Actions CI pipeline.
+
+    To run the tests locally before pushing (recommended), use the `--run-tests` flag:
+
+    ```bash
+    ./push_upstream.sh --run-tests
     ```
 
 A few minutes after pushing, a new release with the packaged `.zip` file and release notes will appear in the Releases section of the repository.

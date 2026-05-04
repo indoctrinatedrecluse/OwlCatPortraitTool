@@ -6,18 +6,32 @@
 
 set -e # Exit immediately if a command exits with a non-zero status.
 
-# --- Run tests before tagging and pushing ---
-echo ">>> Running tests..."
-# Prefer the virtual environment's python if it exists, otherwise use system's.
-VENV_PYTHON="./OwlcatPortraitToolVenv/Scripts/python"
-if [ -f "$VENV_PYTHON" ]; then
-    "$VENV_PYTHON" -m pytest
+# --- Check for --run-tests flag ---
+RUN_TESTS=false
+for arg in "$@"; do
+  if [ "$arg" == "--run-tests" ]; then
+    RUN_TESTS=true
+    break
+  fi
+done
+
+# --- Run tests if requested, otherwise skip ---
+if [ "$RUN_TESTS" = true ]; then
+    echo ">>> Running tests as requested..."
+    # Prefer the virtual environment's python if it exists, otherwise use system's.
+    VENV_PYTHON="./OwlcatPortraitToolVenv/Scripts/python"
+    if [ -f "$VENV_PYTHON" ]; then
+        "$VENV_PYTHON" -m pytest
+    else
+        echo "Warning: Python virtual environment not found at '$VENV_PYTHON'."
+        echo "         Attempting to run 'pytest' from system PATH."
+        pytest
+    fi
+    echo ">>> All tests passed."
 else
-    echo "Warning: Python virtual environment not found at '$VENV_PYTHON'."
-    echo "         Attempting to run 'pytest' from system PATH."
-    pytest
+    echo ">>> Skipping local tests. Use '--run-tests' to execute them before pushing."
+    echo "    (Note: Tests will still run in the CI pipeline on GitHub.)"
 fi
-echo ">>> All tests passed."
 
 # Ensure we are at the project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
