@@ -2,6 +2,12 @@ name: Create and Publish Release
 
 on:
   workflow_dispatch: # Allows manual runs from the Actions tab
+    inputs:
+      run_all_tests:
+        description: 'Run all tests (including slow network tests)'
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - 'v*.*.*'
@@ -28,8 +34,17 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run tests
-        run: pytest
-        # This runs all tests, including the 'network' marked tests, which is ideal for a CI environment.
+        shell: bash
+        run: |
+          # By default (on tag push), run only fast tests to keep releases quick.
+          # For manual workflow_dispatch runs, respect the 'run_all_tests' input.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.run_all_tests }}" == "true" ]]; then
+            echo "Running all tests (including network) as requested..."
+            pytest
+          else
+            echo "Running fast, local-only tests..."
+            pytest -m "not network"
+          fi
 
       - name: Build and package application
         run: python build_exe.py --package --smoke-test

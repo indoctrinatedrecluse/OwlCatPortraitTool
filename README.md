@@ -82,13 +82,15 @@ Your release workflow is:
     ./push_upstream.sh
     ```
 
-    By default, this script runs only the fast, local unit tests. The full test suite, including slower network-dependent tests, will still run automatically in the GitHub Actions CI pipeline.
+    By default, this script runs only the fast, local unit tests to make pushes quick. The automated release on GitHub will also only run fast tests.
 
-    To run the complete test suite locally before pushing, use the `--run-all-tests` flag:
+    To run the complete test suite locally before pushing (recommended for major changes), use the `--run-all-tests` flag:
 
     ```bash
     ./push_upstream.sh --run-all-tests
     ```
+
+    You can also trigger a manual build from the "Actions" tab in GitHub and select an option to run the full test suite in the CI environment.
 
 A few minutes after pushing, a new release with the packaged `.zip` file and release notes will appear in the Releases section of the repository.
 
