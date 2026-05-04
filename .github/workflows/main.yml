@@ -33,18 +33,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run tests
-        shell: bash
+      - name: Run fast tests (default)
+        if: github.event_name == 'push' || inputs.run_all_tests == false
         run: |
-          # By default (on tag push), run only fast tests to keep releases quick.
-          # For manual workflow_dispatch runs, respect the 'run_all_tests' input.
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.run_all_tests }}" == "true" ]]; then
-            echo "Running all tests (including network) as requested..."
-            pytest
-          else
-            echo "Running fast, local-only tests..."
-            pytest -m "not network"
-          fi
+          echo "Running fast, local-only tests to keep the release process quick."
+          pytest -m "not network"
+
+      - name: Run all tests (on manual request)
+        if: github.event_name == 'workflow_dispatch' && inputs.run_all_tests == true
+        run: |
+          echo "Running all tests, including slow network tests, as requested..."
+          pytest
 
       - name: Build and package application
         run: python build_exe.py --package --smoke-test
