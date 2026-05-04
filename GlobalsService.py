@@ -8,6 +8,7 @@ PATHFINDER_KINGMAKER = "Pathfinder Kingmaker"
 PATHFINDER_WRATH = "Pathfinder Wrath of the Righteous"
 WARHAMMER_ROGUE_TRADER = "Warhammer 40k: Rogue Trader"
 WARHAMMER_DARK_HERESY = "Warhammer 40k: Dark Heresy"
+STARFINDER = "Starfinder"
 
 MAX_RECENT_FILES = 10
 
@@ -65,6 +66,11 @@ GAME_CONFIGS = (
     GameConfig(
         WARHAMMER_DARK_HERESY,
         "WHDH",
+        PATHFINDER_KINGMAKER_PORTRAIT_DIMENSIONS,
+    ),
+    GameConfig(
+        STARFINDER,
+        "Starfinder",
         PATHFINDER_KINGMAKER_PORTRAIT_DIMENSIONS,
     ),
 )

@@ -1,8 +1,8 @@
+# A descriptive User-Agent is often required by image board APIs (e.g., Danbooru).
+# It should identify the application and provide a way to find its source.
 APP_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36 "
-    "OwlcatPortraitTool/1.0"
+    "OwlcatPortraitTool/0.9.0 "
+    "(https://github.com/indoctrinatedrecluse/OwlcatPortraitTool)"
 )
 
 IMAGE_REQUEST_HEADERS = {

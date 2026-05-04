@@ -2,6 +2,18 @@
 
 All notable project changes are listed by commit.
 
+## v0.9.0
+
+### feat: Add Starfinder support, fix Rule34 search, and add API tests
+
+- **Added**
+  - **Game Support**: Added support for the "Starfinder" game.
+  - **Testing**: Added a new test suite (`tests/test_SearchService.py`) that performs live API calls to all supported booru sites to verify search functionality.
+- **Fixed**
+  - **Search**: Corrected the API endpoint for the "Rule34" booru, which was preventing searches from returning results.
+- **Changed**
+  - **CI/CD**: The `push_upstream.sh` release script now runs the test suite automatically before creating a release tag, providing a quality gate to prevent regressions.
+
 ## v0.8.0
 
 ### feat: Add optional code signing for Windows executable

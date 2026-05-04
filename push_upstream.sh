@@ -6,6 +6,19 @@
 
 set -e # Exit immediately if a command exits with a non-zero status.
 
+# --- Run tests before tagging and pushing ---
+echo ">>> Running tests..."
+# Prefer the virtual environment's python if it exists, otherwise use system's.
+VENV_PYTHON="./OwlcatPortraitToolVenv/Scripts/python"
+if [ -f "$VENV_PYTHON" ]; then
+    "$VENV_PYTHON" -m pytest
+else
+    echo "Warning: Python virtual environment not found at '$VENV_PYTHON'."
+    echo "         Attempting to run 'pytest' from system PATH."
+    pytest
+fi
+echo ">>> All tests passed."
+
 # Ensure we are at the project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1

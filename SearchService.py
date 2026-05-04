@@ -1,6 +1,6 @@
 from io import BytesIO
 from dataclasses import dataclass
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urljoin, urlparse, urlunparse
 
 from PIL import Image
 import requests
@@ -43,12 +43,12 @@ BOORU_SITES = {
         "url": "https://gelbooru.com/index.php?page=dapi&s=post&q=index&json=1&tags={tags}&limit={limit}&pid={page}",
     },
     "e621": {
-        "api": "danbooru",
+        "api": "e621",
         "url": "https://e621.net/posts.json?tags={tags}&limit={limit}&page={page}",
     },
     "Rule34": {
         "api": "gelbooru",
-        "url": "https://rule34.xxx/index.php?page=dapi&s=post&q=index&json=1&tags={tags}&limit={limit}&pid={page}",
+        "url": "https://api.rule34.xxx/index.php?page=dapi&s=post&q=index&json=1&tags={tags}&limit={limit}&pid={page}",
     },
     "Derpibooru": {
         "api": "derpibooru",
@@ -70,6 +70,12 @@ def get_booru_sites():
     return list(BOORU_SITES.keys())
 
 
+def _get_url_origin(url):
+    """Extracts the scheme and netloc from a URL (e.g., 'https://example.com')."""
+    parsed = urlparse(url)
+    return urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+
+
 def _join_url(base_url, path):
     """Safely join a base URL and a relative path."""
     if not path or path.startswith(("http://", "https://")):
@@ -85,35 +91,29 @@ def _make_api_request(url):
         headers=JSON_REQUEST_HEADERS,
     )
     response.raise_for_status()
+    # Some APIs (like Gelbooru) return an empty body for no results,
+    # which would cause a JSONDecodeError.
+    if not response.content:
+        return None
     return response.json()
 
 
 def _extract_common_post_data(post, config):
     """Extracts result data from a standard Danbooru/Gelbooru post object."""
-    base_url = config["url"]
-    image_url = _join_url(base_url, post.get("file_url"))
+    origin = _get_url_origin(config["url"])
+    image_url = post.get("file_url")
     preview_url_path = (
-        post.get("preview_file_url")
+        post.get("preview_url")
+        or post.get("preview_file_url")
+        or post.get("sample_url")
         or post.get("sample_file_url")
         or post.get("large_file_url")
-        or post.get("preview_url")
-        or post.get("sample_url")
     )
     width = post.get("image_width") or post.get("width")
     height = post.get("image_height") or post.get("height")
-    preview_url = _join_url(base_url, preview_url_path)
 
-    if not image_url and isinstance(post.get("file"), dict):
-        image_url = _join_url(base_url, post["file"].get("url"))
-        width = width or post["file"].get("width")
-        height = height or post["file"].get("height")
-
-    if not preview_url and isinstance(post.get("preview"), dict):
-        preview_url = _join_url(base_url, post["preview"].get("url"))
-
-    if not preview_url and isinstance(post.get("sample"), dict):
-        preview_url = _join_url(base_url, post["sample"].get("url"))
-
+    image_url = _join_url(origin, image_url)
+    preview_url = _join_url(origin, preview_url_path)
     if not image_url:
         return None
 
@@ -132,9 +132,17 @@ def _search_gelbooru(config, tags, page, limit):
     search_url = config["url"].format(tags=tag_query, limit=limit, page=api_page)
     json_data = _make_api_request(search_url)
 
+    if not json_data:
+        return []
+
     posts_data = []
     if isinstance(json_data, dict):
-        posts_data = json_data.get("post", [])
+        # Handle cases where 'post' is a list of posts or a single post object
+        posts = json_data.get("post")
+        if isinstance(posts, list):
+            posts_data = posts
+        elif isinstance(posts, dict):
+            posts_data = [posts]
     elif isinstance(json_data, list):
         posts_data = json_data
 
@@ -157,9 +165,16 @@ def _search_danbooru(config, tags, page, limit):
     search_url = config["url"].format(tags=tag_query, limit=limit, page=api_page)
     json_data = _make_api_request(search_url)
 
+    if not json_data:
+        return []
+
     posts_data = []
     if isinstance(json_data, dict):
-        posts_data = json_data.get("posts", [])
+        posts = json_data.get("posts")
+        if isinstance(posts, list):
+            posts_data = posts
+        elif isinstance(posts, dict):
+            posts_data = [posts]
     elif isinstance(json_data, list):
         posts_data = json_data
 
@@ -178,6 +193,9 @@ def _search_derpibooru(config, tags, page, limit):
     search_url = config["url"].format(tags=tag_query, limit=limit, page=page)
     json_data = _make_api_request(search_url)
 
+    if not json_data:
+        return []
+
     results = []
     for post in json_data.get("images", []):
         if not isinstance(post, dict):
@@ -186,12 +204,62 @@ def _search_derpibooru(config, tags, page, limit):
         representations = post.get("representations", {})
         image_url = representations.get("full")
         if image_url:
+            # Prefer smaller thumbnails for faster preview loading
+            preview_url = (
+                representations.get("thumb")
+                or representations.get("small")
+                or representations.get("medium")
+                or representations.get("large")
+            )
             results.append(PortraitSearchResult(
                 image_url=image_url,
-                preview_url=representations.get("thumb"),
+                preview_url=preview_url,
                 width=post.get("width"),
                 height=post.get("height"),
             ))
+    return results
+
+
+def _search_e621(config, tags, page, limit):
+    """Handler for the e621 API."""
+    tag_query = quote(" ".join(tags))
+    search_url = config["url"].format(tags=tag_query, limit=limit, page=page)
+    json_data = _make_api_request(search_url)
+
+    if not json_data:
+        return []
+
+    results = []
+    for post in json_data.get("posts", []):
+        if not isinstance(post, dict):
+            continue
+
+        file_info = post.get("file")
+        if not isinstance(file_info, dict):
+            continue
+
+        image_url = file_info.get("url")
+        if not image_url:
+            continue
+
+        preview_url = None
+        sample_info = post.get("sample")
+        # Prefer sample URL if it exists and has a URL
+        if sample_info and sample_info.get("has") and sample_info.get("url"):
+            preview_url = sample_info.get("url")
+
+        # Fall back to preview URL
+        if not preview_url:
+            preview_info = post.get("preview")
+            if preview_info and preview_info.get("url"):
+                preview_url = preview_info.get("url")
+
+        results.append(PortraitSearchResult(
+            image_url=image_url,
+            preview_url=preview_url,
+            width=file_info.get("width"),
+            height=file_info.get("height"),
+        ))
     return results
 
 
@@ -199,6 +267,7 @@ API_HANDLERS = {
     "gelbooru": _search_gelbooru,
     "danbooru": _search_danbooru,
     "derpibooru": _search_derpibooru,
+    "e621": _search_e621,
 }
 
 
@@ -221,11 +290,9 @@ def search_portraits_by_tags(
     if not handler:
         raise ValueError(f"No handler for API type: {booru_config['api']}")
 
-    try:
-        results = handler(booru_config, normalized_tags, page, limit)
-    except (ValueError, requests.RequestException):
-        return []
-
+    # Let exceptions propagate to the UI layer, which has its own error handling.
+    # This prevents silently failing on network errors or JSON decoding issues.
+    results = handler(booru_config, normalized_tags, page, limit)
     # Common logic for filtering and de-duplicating results
     results_by_url = {}
     for result in results:

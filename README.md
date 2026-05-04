@@ -12,7 +12,7 @@ Current features include:
     - Drag and zoom the image to position it within the required crop frame.
     - Export Small, Medium, and Fulllength portraits to a local folder or directly to the selected game's AppData portraits folder.
 3. **Game Support**:
-    - Switch between supported Owlcat games (Pathfinder, Warhammer) to use the correct portrait dimensions and save paths.
+    - Switch between supported Owlcat games (Pathfinder, Warhammer, Starfinder) to use the correct portrait dimensions and save paths.
 4. **Usability**:
     - Unsaved-change confirmation before leaving the portrait editor or closing the app.
     - "About" dialog with version info, author credit, and usage instructions.
@@ -73,10 +73,10 @@ Your release workflow is:
 
     ```bash
     git add .
-    git commit -m "feat: Add new feature for v0.8.0"
+    git commit -m "feat: Add new feature for v1.0.0"
     ```
 
-1. **Push and Release**: Run the `push_upstream.sh` script. This will automatically tag the release based on the changelog and push it to GitHub, triggering the automated build.
+1. **Push and Release**: Run the `push_upstream.sh` script. This script now runs the test suite before automatically tagging the release based on the changelog and pushing it to GitHub, triggering the automated build.
 
     ```bash
     ./push_upstream.sh

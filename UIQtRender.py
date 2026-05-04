@@ -63,7 +63,7 @@ UNSAVED_EDITOR_CONFIRMATION_TITLE = "Leave Portrait Editor?"
 UNSAVED_EDITOR_CONFIRMATION_MESSAGE = (
     "You have unsaved portrait changes. Leave the Portrait Editor without exporting?"
 )
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.9.0"
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller."""
@@ -516,15 +516,20 @@ class PortraitEditorTab(QtWidgets.QWidget):
         self.zoom_in_button.setEnabled(False)
         zoom_layout.addWidget(self.zoom_in_button)
 
-        self.preview_group = QtWidgets.QGroupBox("Export Preview")
+        self.preview_group = QtWidgets.QGroupBox("Export Previews")
         preview_layout = QtWidgets.QHBoxLayout()
         self.preview_group.setLayout(preview_layout)
         layout.addWidget(self.preview_group)
         self.preview_labels = {}
+        preview_height = 128
         for portrait_size in get_required_portrait_dimensions():
             preview_label = QtWidgets.QLabel(portrait_size.name)
             preview_label.setAlignment(QtCore.Qt.AlignCenter)
-            preview_label.setMinimumSize(96, 120)
+            # Set a fixed size for each preview to enforce the correct aspect ratio
+            preview_width = int(
+                preview_height * (portrait_size.width / portrait_size.height)
+            )
+            preview_label.setFixedSize(preview_width, preview_height)
             preview_label.setFrameShape(QtWidgets.QFrame.Box)
             preview_layout.addWidget(preview_label)
             self.preview_labels[portrait_size.name] = preview_label
@@ -723,7 +728,7 @@ class PortraitEditorTab(QtWidgets.QWidget):
                 Image.Resampling.LANCZOS,
             )
             pixmap = image_to_pixmap(preview_image).scaled(
-                preview_label.size(),
+                preview_label.size(),  # Scale to the label's fixed size
                 QtCore.Qt.KeepAspectRatio,
                 QtCore.Qt.SmoothTransformation,
             )
@@ -1237,17 +1242,10 @@ class SearchTab(QtWidgets.QWidget):
         else:
             self.search_bar.setPlaceholderText("Enter tags, comma-separated...")
 
-    def get_search_input(self):
-        text = self.search_bar.text().strip()
-        if self.input_switch.isChecked():
-            return text
-
-        return [tag.strip() for tag in text.split(",") if tag.strip()]
-
     def process_search(self):
-        search_input = self.get_search_input()
+        raw_text = self.search_bar.text().strip()
 
-        if not search_input:
+        if not raw_text:
             self.results_list.clear()
             self.results_list.addItem("Enter a URL or at least one tag.")
             self.pagination_widget.hide()
@@ -1255,11 +1253,26 @@ class SearchTab(QtWidgets.QWidget):
 
         if self.input_switch.isChecked():
             self.pagination_widget.hide()
-            self.handle_url_input(search_input)
+            self.handle_url_input(raw_text)
             return
 
-        # This is a new tag search
-        self.current_tags = search_input
+        # This is a tag search. Validate the format.
+        if " " in raw_text and "," not in raw_text and len(raw_text.split()) > 1:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid Tag Format",
+                "Please separate multiple tags with commas (e.g., 'tag1, tag2').\n\n"
+                "Using spaces to separate tags is not supported.",
+            )
+            return
+
+        self.current_tags = [tag.strip() for tag in raw_text.split(",") if tag.strip()]
+        if not self.current_tags:
+            self.results_list.clear()
+            self.results_list.addItem("Enter at least one tag.")
+            self.pagination_widget.hide()
+            return
+
         self.current_page = 1
         self.execute_tag_search()
 
