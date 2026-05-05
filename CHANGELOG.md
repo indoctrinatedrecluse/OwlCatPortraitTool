@@ -2,7 +2,7 @@
 
 All notable project changes are listed by commit.
 
-## v0.9.2
+## v0.9.3
 
 ### feat: Update test execution flags in release script
 
