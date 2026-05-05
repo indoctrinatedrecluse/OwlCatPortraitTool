@@ -3,11 +3,15 @@ name: Create and Publish Release
 on:
   workflow_dispatch: # Allows manual runs from the Actions tab
     inputs:
-      run_all_tests:
-        description: 'Run all tests (including slow network tests)'
-        required: false
-        type: boolean
-        default: false
+      test_mode:
+        description: 'Test mode to run'
+        required: true
+        type: choice
+        options:
+          - skip
+          - fast
+          - all
+        default: 'skip'
   push:
     tags:
       - 'v*.*.*'
@@ -33,16 +37,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run fast tests (default)
-        if: github.event_name == 'push' || inputs.run_all_tests == false
+      - name: Determine test mode
+        id: check_mode
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "MODE=${{ inputs.test_mode }}" >> $GITHUB_ENV
+          else
+            # Fetch the tag explicitly to read its annotation message
+            git fetch --force origin refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}
+            TAG_MSG=$(git tag -l --format='%(contents)' ${{ github.ref_name }})
+            if [[ "$TAG_MSG" == *"TEST_MODE=all"* ]]; then
+              echo "MODE=all" >> $GITHUB_ENV
+            elif [[ "$TAG_MSG" == *"TEST_MODE=fast"* ]]; then
+              echo "MODE=fast" >> $GITHUB_ENV
+            else
+              echo "MODE=skip" >> $GITHUB_ENV
+            fi
+          fi
+
+      - name: Run fast tests
+        if: env.MODE == 'fast'
         run: |
           echo "Running fast, local-only tests to keep the release process quick."
-          pytest -m "not network"
+          pytest -m "not network and not ui_qt_render"
 
-      - name: Run all tests (on manual request)
-        if: github.event_name == 'workflow_dispatch' && inputs.run_all_tests == true
+      - name: Run all tests
+        if: env.MODE == 'all'
         run: |
-          echo "Running all tests, including slow network tests, as requested..."
+          echo "Running all tests (including slow network and UI tests)..."
           pytest
 
       - name: Build and package application

@@ -79,7 +79,7 @@ if git rev-parse "$LATEST_VERSION" >/dev/null 2>&1; then
 fi
 
 echo "Creating new Git tag: $LATEST_VERSION"
-git tag "$LATEST_VERSION"
+git tag -a "$LATEST_VERSION" -m "TEST_MODE=$TEST_MODE"
 echo "Successfully created tag '$LATEST_VERSION'."
 
 # --- Step 2: Push commits and tags ---
