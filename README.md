@@ -82,10 +82,16 @@ Your release workflow is:
     ./push_upstream.sh
     ```
 
-    By default, this script runs only the fast, local unit tests to make pushes quick. The automated release on GitHub will also only run fast tests.
+    By default, this script skips all tests to make pushes immediate (you can also explicitly pass `--skip-tests`). The automated release on GitHub will run fast tests.
 
-    To run the complete test suite locally before pushing (recommended for major changes), use the `--run-all-tests` flag:
+    To run tests locally before pushing, use one of the following flags:
 
+    - **Run fast tests** (skips slow network and UI render tests):
+      ```bash
+      ./push_upstream.sh --run-fast-tests
+      ```
+
+    - **Run all tests** (recommended for major changes):
     ```bash
     ./push_upstream.sh --run-all-tests
     ```

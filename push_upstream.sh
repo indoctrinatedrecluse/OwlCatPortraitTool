@@ -6,12 +6,15 @@
 
 set -e # Exit immediately if a command exits with a non-zero status.
 
-# --- Check for --run-all-tests flag ---
-RUN_ALL_TESTS=false
+# --- Check for test flags ---
+TEST_MODE="skip"
 for arg in "$@"; do
   if [ "$arg" == "--run-all-tests" ]; then
-    RUN_ALL_TESTS=true
-    break
+    TEST_MODE="all"
+  elif [ "$arg" == "--run-fast-tests" ]; then
+    TEST_MODE="fast"
+  elif [ "$arg" == "--skip-tests" ]; then
+    TEST_MODE="skip"
   fi
 done
 
@@ -26,15 +29,17 @@ else
     PYTEST_CMD="pytest"
 fi
 
-if [ "$RUN_ALL_TESTS" = true ]; then
-    echo ">>> Running all tests (including network tests)..."
+if [ "$TEST_MODE" == "all" ]; then
+    echo ">>> Running all tests (including network and UI tests)..."
     $PYTEST_CMD
+    echo ">>> All executed tests passed."
+elif [ "$TEST_MODE" == "fast" ]; then
+    echo ">>> Running fast tests only (skipping network and UI tests)..."
+    $PYTEST_CMD -m "not network and not ui_qt_render"
+    echo ">>> Fast tests passed."
 else
-    echo ">>> Running local-only tests..."
-    $PYTEST_CMD -m "not network"
-    echo ">>> Local tests passed. Skipping network tests. Use '--run-all-tests' to include them."
+    echo ">>> Skipping all tests (--skip-tests or default behavior)..."
 fi
-echo ">>> All executed tests passed."
 
 # Ensure we are at the project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

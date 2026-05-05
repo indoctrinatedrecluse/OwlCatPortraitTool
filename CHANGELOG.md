@@ -2,6 +2,14 @@
 
 All notable project changes are listed by commit.
 
+## v0.9.2
+
+### feat: Update test execution flags in release script
+
+- **Changed**
+  - **Release Script**: The `push_upstream.sh` script now defaults to skipping all tests (`--skip-tests`) to make pushes immediate. Added `--run-fast-tests` and `--run-all-tests` options to control test execution before pushing.
+  - **Documentation**: Updated `README.md` to document the new testing flags and removed outdated references.
+
 ## v0.9.1
 
 ### fix: Improve CI/CD reliability and speed
